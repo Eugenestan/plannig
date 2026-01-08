@@ -44,6 +44,9 @@
         <button id="tab-no-release" class="tab-button" onclick="switchTab('no-release')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
           Без релиза
         </button>
+        <button id="tab-improve" class="tab-button" onclick="switchTab('improve')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Improve
+        </button>
       </div>
     </div>
 
@@ -227,6 +230,35 @@
             <tbody id="no-release-tbody">
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Таб: Improve -->
+    <div id="tab-content-improve" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar">
+          <h2>Improve</h2>
+        </div>
+        
+        <div id="improve-loading" style="text-align: center; padding: 40px; color: var(--muted);">
+          Загрузка данных...
+        </div>
+        <div id="improve-error" style="display: none;"></div>
+        <div id="improve-content" style="display: none;">
+          <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+              <thead>
+                <tr style="border-bottom: 2px solid var(--border);">
+                  <th style="padding: 10px; text-align: left; font-weight: 600;">Ключ</th>
+                  <th style="padding: 10px; text-align: left; font-weight: 600;">Заголовок</th>
+                  <th style="padding: 10px; text-align: left; font-weight: 600;">Создано</th>
+                </tr>
+              </thead>
+              <tbody id="improve-tbody">
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -476,6 +508,12 @@
       // Загружаем данные для таба "Без релиза" при первом открытии
       if (tabName === 'no-release') {
         loadNoReleaseUsers();
+      }
+      
+      // Загружаем данные для таба "Improve" при первом открытии
+      if (tabName === 'improve' && !window.improveLoaded) {
+        loadImprove();
+        window.improveLoaded = true;
       }
     }
     
@@ -1152,6 +1190,199 @@
         }
         errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
         errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Функция загрузки задач Improve
+    async function loadImprove() {
+      const loading = document.getElementById('improve-loading');
+      const errorDiv = document.getElementById('improve-error');
+      const content = document.getElementById('improve-content');
+      const tbody = document.getElementById('improve-tbody');
+      
+      loading.style.display = 'block';
+      errorDiv.style.display = 'none';
+      content.style.display = 'none';
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
+        const response = await fetch(`/api/teams/${teamId}/improve`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const result = await response.json();
+        
+        loading.style.display = 'none';
+        
+        if (!result.success) {
+          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        const tasks = result.data || [];
+        if (tasks.length === 0) {
+          errorDiv.innerHTML = '<p class="muted">Нет задач для отображения.</p>';
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Функция форматирования даты
+        function formatDate(dateStr) {
+          if (!dateStr) return '-';
+          const date = new Date(dateStr);
+          return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+        
+        // Заполняем таблицу
+        let html = '';
+        tasks.forEach((task, index) => {
+          html += `
+            <tr data-task-key="${escapeHtml(task.key)}" draggable="true" style="border-bottom: 1px solid var(--border); cursor: move;" 
+                ondragstart="handleImproveDragStart(event)" 
+                ondragover="handleImproveDragOver(event)" 
+                ondragenter="handleImproveDragEnter(event)" 
+                ondragleave="handleImproveDragLeave(event)" 
+                ondrop="handleImproveDrop(event)" 
+                ondragend="handleImproveDragEnd(event)">
+              <td style="padding: 10px;">
+                <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;" onclick="event.stopPropagation();">
+                  ${escapeHtml(task.key)}
+                </a>
+              </td>
+              <td style="padding: 10px;">
+                ${escapeHtml(task.summary || '')}
+              </td>
+              <td style="padding: 10px; color: var(--muted); font-size: 13px;">
+                ${formatDate(task.created)}
+              </td>
+            </tr>
+          `;
+        });
+        
+        tbody.innerHTML = html;
+        content.style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        let errorMsg = e.message;
+        if (e.name === 'AbortError') {
+          errorMsg = 'Запрос превысил время ожидания. Попробуйте еще раз.';
+        }
+        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
+        errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Переменные для drag-and-drop в таблице Improve
+    let draggedImproveRow = null;
+    let improveDragOverRow = null;
+    
+    // Обработчики drag-and-drop для таблицы Improve
+    function handleImproveDragStart(e) {
+      draggedImproveRow = e.target.closest('tr');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/html', draggedImproveRow.outerHTML);
+      draggedImproveRow.style.opacity = '0.5';
+    }
+    
+    function handleImproveDragOver(e) {
+      if (e.preventDefault) {
+        e.preventDefault();
+      }
+      e.dataTransfer.dropEffect = 'move';
+      return false;
+    }
+    
+    function handleImproveDragEnter(e) {
+      const row = e.target.closest('tr');
+      if (row && row !== draggedImproveRow && row.hasAttribute('data-task-key')) {
+        improveDragOverRow = row;
+        row.style.backgroundColor = 'rgba(0, 123, 255, 0.2)';
+      }
+    }
+    
+    function handleImproveDragLeave(e) {
+      const row = e.target.closest('tr');
+      if (row && row === improveDragOverRow) {
+        row.style.backgroundColor = '';
+        improveDragOverRow = null;
+      }
+    }
+    
+    function handleImproveDrop(e) {
+      if (e.stopPropagation) {
+        e.stopPropagation();
+      }
+      
+      const dropRow = e.target.closest('tr');
+      if (!dropRow || !draggedImproveRow || dropRow === draggedImproveRow || !dropRow.hasAttribute('data-task-key')) {
+        return false;
+      }
+      
+      const tbody = dropRow.parentNode;
+      const allRows = Array.from(tbody.querySelectorAll('tr[data-task-key]'));
+      const draggedIndex = allRows.indexOf(draggedImproveRow);
+      const dropIndex = allRows.indexOf(dropRow);
+      
+      if (draggedIndex < dropIndex) {
+        tbody.insertBefore(draggedImproveRow, dropRow.nextSibling);
+      } else {
+        tbody.insertBefore(draggedImproveRow, dropRow);
+      }
+      
+      // Сохраняем новый порядок
+      saveImproveOrder();
+      
+      return false;
+    }
+    
+    function handleImproveDragEnd(e) {
+      // Очищаем все стили перетаскивания
+      const tbody = document.getElementById('improve-tbody');
+      if (tbody) {
+        const allRows = tbody.querySelectorAll('tr[data-task-key]');
+        allRows.forEach(row => {
+          row.style.opacity = '';
+          row.style.backgroundColor = '';
+        });
+      }
+      
+      if (draggedImproveRow) {
+        draggedImproveRow.style.opacity = '';
+      }
+      if (improveDragOverRow) {
+        improveDragOverRow.style.backgroundColor = '';
+        improveDragOverRow = null;
+      }
+      draggedImproveRow = null;
+    }
+    
+    // Функция сохранения порядка задач Improve
+    async function saveImproveOrder() {
+      const tbody = document.getElementById('improve-tbody');
+      if (!tbody) return;
+      
+      const rows = Array.from(tbody.querySelectorAll('tr[data-task-key]'));
+      const taskKeys = rows.map(row => row.getAttribute('data-task-key'));
+      
+      if (taskKeys.length === 0) return;
+      
+      try {
+        const response = await fetch(`/api/teams/${teamId}/improve/order`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ task_keys: taskKeys })
+        });
+        
+        const result = await response.json();
+        if (!result.success) {
+          console.error('Ошибка сохранения порядка:', result.error);
+        }
+      } catch (e) {
+        console.error('Ошибка при сохранении порядка:', e);
       }
     }
     

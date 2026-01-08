@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Planing</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div>
+        <h1>Planing</h1>
+        <p class="muted">Система управления командами и дашбордами</p>
+      </div>
+    </header>
+
+    <!-- Форма ввода API ключа -->
+    <div class="card" style="max-width: 500px; margin: 40px auto;">
+      <h2 style="margin-top: 0;">Введите API ключ</h2>
+      {% if error_msg %}
+      <div style="background: #fee; color: #c33; padding: 12px; border-radius: 6px; margin-bottom: 16px; border: 1px solid #fcc;">
+        {{ error_msg }}
+      </div>
+      {% endif %}
+      <form method="POST" action="/verify-key">
+        <div style="margin-bottom: 16px;">
+          <label for="api_key" style="display: block; margin-bottom: 8px; font-weight: 600;">API ключ:</label>
+          <input 
+            type="password" 
+            id="api_key" 
+            name="api_key" 
+            required 
+            placeholder="Введите ваш Jira API ключ"
+            style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; box-sizing: border-box;"
+            autofocus
+          />
+          <p class="muted" style="margin-top: 8px; font-size: 12px;">
+            Используйте ваш Jira API токен (JIRA_API_TOKEN или JIRA_TOKEN)
+          </p>
+        </div>
+        <button 
+          type="submit" 
+          style="width: 100%; padding: 12px; background: var(--primary, #007bff); color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: 600; cursor: pointer;"
+        >
+          Продолжить
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
+

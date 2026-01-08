@@ -148,3 +148,60 @@ def normalize_user(u: Any) -> Optional[dict]:
     }
 
 
+def validate_api_key(api_key: str, base_url: str, email: str = "") -> tuple[bool, str]:
+    """
+    Проверяет валидность API ключа через Jira API.
+    
+    Args:
+        api_key: API ключ для проверки (может быть JIRA_API_TOKEN или JIRA_TOKEN)
+        base_url: Базовый URL Jira
+        email: Email для Basic auth (опционально, если ключ - это JIRA_API_TOKEN)
+        
+    Returns:
+        tuple[bool, str]: (is_valid, error_message)
+    """
+    if not api_key or not api_key.strip():
+        return False, "Ключ не может быть пустым"
+    
+    api_key = api_key.strip()
+    
+    # Если есть email, сначала пробуем Basic auth (для JIRA_API_TOKEN)
+    if email:
+        try:
+            headers: Dict[str, str] = {"Accept": "application/json"}
+            raw = f"{email}:{api_key}".encode("utf-8")
+            headers["Authorization"] = "Basic " + base64.b64encode(raw).decode("ascii")
+            jira = Jira(base_url, headers, timeout_s=10)
+            api_prefix = jira.detect_api_prefix()
+            r = jira.request("GET", f"{api_prefix}/serverInfo")
+            
+            if r.status_code == 200:
+                print(f"DEBUG: API key validated successfully with Basic auth")
+                return True, ""
+            else:
+                print(f"DEBUG: Basic auth failed with status {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            print(f"DEBUG: Basic auth exception: {str(e)}")
+    
+    # Пробуем как Bearer token (для JIRA_TOKEN)
+    try:
+        headers: Dict[str, str] = {"Accept": "application/json"}
+        headers["Authorization"] = f"Bearer {api_key}"
+        jira = Jira(base_url, headers, timeout_s=10)
+        api_prefix = jira.detect_api_prefix()
+        r = jira.request("GET", f"{api_prefix}/serverInfo")
+        
+        if r.status_code == 200:
+            print(f"DEBUG: API key validated successfully with Bearer token")
+            return True, ""
+        else:
+            print(f"DEBUG: Bearer token failed with status {r.status_code}: {r.text[:200]}")
+            return False, f"Неправильный ключ (HTTP {r.status_code})"
+    except Exception as e:
+        print(f"DEBUG: Bearer token exception: {str(e)}")
+        return False, f"Ошибка проверки ключа: {str(e)}"
+    
+    # Если оба метода не сработали
+    return False, "Неправильный ключ. Проверьте, что вы используете правильный API токен."
+
+

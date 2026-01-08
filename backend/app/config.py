@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     sqlite_path: str = "planing.db"
 
     jira_secrets_file: str = "../jira_secrets.env"
+    session_secret_key: str = "change-this-secret-key-in-production"
 
     @property
     def jira_secrets_file_abs(self) -> str:

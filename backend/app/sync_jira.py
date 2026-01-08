@@ -1,28 +1,38 @@
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .config import settings
-from .jira_client import Jira, build_headers_from_env, extract_team_values, find_field_id, load_env_file, normalize_user
-from .models import Team, TeamMember, User
+from .jira_client import Jira, extract_team_values, find_field_id, normalize_user
+from .models import CredentialTeam, CredentialUser, Team, TeamMember, User
 
 
-def sync_from_jira(db: Session, *, team_field_name: str = "TEAM", user_fields: List[str] | None = None) -> Dict[str, int]:
+def sync_from_jira_for_credential(
+    db: Session,
+    *,
+    credential_id: int,
+    jira: Jira,
+    api_prefix: str,
+    team_field_name: str = "TEAM",
+    user_fields: List[str] | None = None,
+    clear_existing_links: bool = True,
+) -> Dict[str, int]:
     """
-    Подтягивает команды и пользователей из Jira по задачам, где TEAM не пустой.
+    Подтягивает команды и пользователей из Jira по задачам, где TEAM не пустой,
+    и привязывает доступ к ним к конкретному credential.
     - upsert teams
     - upsert users
     - upsert team_members (связь)
+    - upsert credential_teams / credential_users (изоляция пользователей)
     """
     user_fields = user_fields or ["assignee"]
 
-    load_env_file(settings.jira_secrets_file_abs)
-    base_url, headers = build_headers_from_env()
-    jira = Jira(base_url, headers)
-    api_prefix = jira.detect_api_prefix()
+    if clear_existing_links:
+        db.execute(delete(CredentialTeam).where(CredentialTeam.credential_id == credential_id))
+        db.execute(delete(CredentialUser).where(CredentialUser.credential_id == credential_id))
+        db.flush()
 
     fields = jira.get_fields(api_prefix)
     team_field_id = find_field_id(fields, team_field_name)
@@ -78,6 +88,16 @@ def sync_from_jira(db: Session, *, team_field_name: str = "TEAM", user_fields: L
                         user.active = bool(nu.get("active", True))
                     issue_users.append(user)
 
+                    # привязка user к credential (изоляция)
+                    cu = db.scalar(
+                        select(CredentialUser).where(
+                            CredentialUser.credential_id == credential_id,
+                            CredentialUser.user_id == user.id,
+                        )
+                    )
+                    if cu is None:
+                        db.add(CredentialUser(credential_id=credential_id, user_id=user.id))
+
             for t in teams:
                 jira_team_id = str(t.get("id") or "")
                 name = (t.get("name") or t.get("title") or "").strip()
@@ -95,6 +115,16 @@ def sync_from_jira(db: Session, *, team_field_name: str = "TEAM", user_fields: L
                     team.name = name
                     # Обновляем имя команды, если изменилось
                     db.flush()
+
+                # привязка team к credential (изоляция)
+                ct = db.scalar(
+                    select(CredentialTeam).where(
+                        CredentialTeam.credential_id == credential_id,
+                        CredentialTeam.team_id == team.id,
+                    )
+                )
+                if ct is None:
+                    db.add(CredentialTeam(credential_id=credential_id, team_id=team.id))
 
                 # связываем пользователей с командами (проверяем дубликаты в БД и в рамках задачи)
                 seen_in_issue: set[int] = set()
@@ -115,5 +145,27 @@ def sync_from_jira(db: Session, *, team_field_name: str = "TEAM", user_fields: L
 
     db.commit()
     return {"teams_created": created_teams, "users_created": created_users, "links_created": created_links}
+
+
+def credential_has_any_team(
+    *,
+    jira: Jira,
+    api_prefix: str,
+    team_field_name: str = "TEAM",
+) -> bool:
+    """
+    Проверка для авторизации: есть ли хотя бы одна команда, доступная по ключу.
+    """
+    fields = jira.get_fields(api_prefix)
+    team_field_id = find_field_id(fields, team_field_name)
+    jql = f'"{team_field_id}" is not EMPTY'
+    data = jira.search_jql_page(jql=jql, fields=[team_field_id], max_results=1, next_page_token="")
+    issues = data.get("issues", []) or data.get("values", [])
+    for issue in issues:
+        f = issue.get("fields", {})
+        teams = extract_team_values(f.get(team_field_id))
+        if teams:
+            return True
+    return False
 
 

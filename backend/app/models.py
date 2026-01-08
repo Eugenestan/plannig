@@ -6,6 +6,26 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
 
 
+class ApiCredential(Base):
+    """
+    Серверное хранилище Jira API ключа.
+
+    В cookie-сессии храним только session_key (идентификатор), сам ключ хранится в БД.
+    """
+
+    __tablename__ = "api_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    jira_api_key: Mapped[str] = mapped_column(String(512), nullable=False)
+
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    teams: Mapped[list["CredentialTeam"]] = relationship(back_populates="credential", cascade="all, delete-orphan")
+    users: Mapped[list["CredentialUser"]] = relationship(back_populates="credential", cascade="all, delete-orphan")
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -53,4 +73,42 @@ class TeamMember(Base):
 
     __table_args__ = (UniqueConstraint("team_id", "user_id", name="uq_team_member"),)
 
+
+class CredentialTeam(Base):
+    """
+    Связь: какие команды доступны текущему credential (пользователю/браузеру).
+    """
+
+    __tablename__ = "credential_teams"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    credential: Mapped[ApiCredential] = relationship(back_populates="teams")
+    team: Mapped[Team] = relationship()
+
+    __table_args__ = (UniqueConstraint("credential_id", "team_id", name="uq_credential_team"),)
+
+
+class CredentialUser(Base):
+    """
+    Связь: какие пользователи доступны текущему credential.
+    Используется для того, чтобы один пользователь системы не видел пользователей другого.
+    """
+
+    __tablename__ = "credential_users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    credential: Mapped[ApiCredential] = relationship(back_populates="users")
+    user: Mapped[User] = relationship()
+
+    __table_args__ = (UniqueConstraint("credential_id", "user_id", name="uq_credential_user"),)
 

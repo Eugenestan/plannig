@@ -9,10 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from .config import settings
 from .jira_client import Jira, build_headers_from_env, find_field_id, load_env_file
-from .models import Team, TeamMember, User
+from .models import CredentialTeam, CredentialUser, Team, TeamMember, User
 
 
 def get_team_worklog(
@@ -21,6 +22,9 @@ def get_team_worklog(
     days: str | int = 8,
     *,
     team_field_name: str = "TEAM",
+    jira: "Jira | None" = None,
+    api_prefix: str | None = None,
+    credential_id: int | None = None,
 ) -> List[Dict]:
     """
     Получить списанное время для всех пользователей команды за последние N дней.
@@ -39,19 +43,38 @@ def get_team_worklog(
     if not team:
         return []
 
+    # Ограничиваем доступ: если передан credential_id, убеждаемся что команда доступна
+    if credential_id is not None:
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == credential_id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return []
+
     members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()
     if not members:
         return []
 
     user_ids = {m.user_id for m in members}
+    if credential_id is not None:
+        # только пользователи, доступные этому credential
+        allowed_user_ids = {
+            cu.user_id
+            for cu in db.scalars(select(CredentialUser).where(CredentialUser.credential_id == credential_id)).all()
+        }
+        user_ids = user_ids.intersection(allowed_user_ids)
+        if not user_ids:
+            return []
+
     users = db.query(User).filter(User.id.in_(user_ids)).all()
     user_by_account_id: Dict[str, User] = {u.jira_account_id: u for u in users if u.jira_account_id}
 
-    # Подключаемся к Jira
-    load_env_file(settings.jira_secrets_file_abs)
-    base_url, headers = build_headers_from_env()
-    jira = Jira(base_url, headers)
-    api_prefix = jira.detect_api_prefix()
+    # Подключаемся к Jira (если не передан клиент)
+    if jira is None or api_prefix is None:
+        load_env_file(settings.jira_secrets_file_abs)
+        base_url, headers = build_headers_from_env()
+        jira = Jira(base_url, headers)
+        api_prefix = jira.detect_api_prefix()
 
     # Получаем поле TEAM
     fields = jira.get_fields(api_prefix)

@@ -13,9 +13,14 @@
         <h1>Команды</h1>
         <p class="muted">Выберите команду, чтобы назначить сотрудников и перейти к следующему шагу.</p>
       </div>
-      <form method="post" action="/sync">
-        <button class="button" type="submit">Синхронизировать из Jira</button>
-      </form>
+      <div style="display: flex; gap: 10px;">
+        <form method="post" action="/sync">
+          <button class="button" type="submit">Синхронизировать из Jira</button>
+        </form>
+        <form method="post" action="/logout" style="display: inline;">
+          <button class="button" type="submit" style="background: #dc3545;">Выйти</button>
+        </form>
+      </div>
     </header>
 
     {% if sync_error %}

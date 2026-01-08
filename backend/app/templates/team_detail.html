@@ -19,8 +19,17 @@
     <form method="post" action="/teams/{{ team.id }}/members">
       <div class="card">
         <div class="toolbar">
-          <input id="filter" class="input" type="text" placeholder="Поиск по имени..." oninput="filterUsers()">
+          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;">
+              <input type="checkbox" id="select-all" onchange="toggleAllUsers()">
+              <span style="font-size: 14px;">Выбрать всех</span>
+            </label>
+            <input id="filter" class="input" type="text" placeholder="Поиск по имени..." oninput="filterUsers()" style="flex: 1;">
+          </div>
           <button class="button primary" type="submit">Продолжить</button>
+        </div>
+        <div style="margin-top: 8px; margin-bottom: 8px; color: var(--muted); font-size: 14px;">
+          <span id="selected-counter">0</span>/<span id="total-counter">{{ all_users|length }}</span>
         </div>
         <div class="list" id="users">
           {% for u in all_users %}
@@ -38,6 +47,33 @@
   </div>
 
   <script>
+    const totalUsers = {{ all_users|length }};
+    
+    function updateCounter() {
+      const checked = document.querySelectorAll('input[name="user_ids"]:checked').length;
+      document.getElementById('selected-counter').textContent = checked;
+      document.getElementById('total-counter').textContent = totalUsers;
+      
+      // Обновляем состояние чекбокса "Выбрать всех"
+      const selectAll = document.getElementById('select-all');
+      const visibleCheckboxes = Array.from(document.querySelectorAll('.user-row:not([style*="display: none"]) input[name="user_ids"]'));
+      const visibleChecked = visibleCheckboxes.filter(cb => cb.checked).length;
+      selectAll.checked = visibleCheckboxes.length > 0 && visibleChecked === visibleCheckboxes.length;
+      selectAll.indeterminate = visibleChecked > 0 && visibleChecked < visibleCheckboxes.length;
+    }
+    
+    function toggleAllUsers() {
+      const selectAll = document.getElementById('select-all');
+      const visibleRows = document.querySelectorAll('.user-row:not([style*="display: none"])');
+      visibleRows.forEach(row => {
+        const checkbox = row.querySelector('input[name="user_ids"]');
+        if (checkbox) {
+          checkbox.checked = selectAll.checked;
+        }
+      });
+      updateCounter();
+    }
+    
     function filterUsers() {
       const q = (document.getElementById('filter').value || '').toLowerCase();
       const rows = document.querySelectorAll('.user-row');
@@ -45,7 +81,16 @@
         const name = r.getAttribute('data-name') || '';
         r.style.display = name.includes(q) ? '' : 'none';
       });
+      updateCounter();
     }
+    
+    // Инициализация счетчика и обработчиков
+    document.addEventListener('DOMContentLoaded', function() {
+      updateCounter();
+      document.querySelectorAll('input[name="user_ids"]').forEach(cb => {
+        cb.addEventListener('change', updateCounter);
+      });
+    });
   </script>
 </body>
 </html>

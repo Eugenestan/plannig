@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Дашборд — {{ team.name }}</title>
   <link rel="stylesheet" href="/static/styles.css?v=2">
+  <style>
+    /* Черный текст в раскрывающемся списке селектов */
+    #days option,
+    #done-user-select option,
+    #done-period-select option,
+    #no-release-user-select option {
+      color: #000;
+      background-color: #fff;
+    }
+  </style>
 </head>
 <body>
   <div class="container">

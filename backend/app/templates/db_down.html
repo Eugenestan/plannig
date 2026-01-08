@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>База недоступна</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>MySQL не доступен</h1>
+      <p class="muted">Сервер запущен, но не может подключиться к базе данных.</p>
+      <p><b>Что сделать:</b></p>
+      <pre class="code">cd C:\Users\Steve\planing\backend
+docker compose up -d</pre>
+      <p class="muted small">После этого обновите страницу.</p>
+      {% if error %}
+        <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;">
+        <div class="muted small"><b>Технические детали:</b> {{ error }}</div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>
+
+

@@ -1,0 +1,24 @@
+# Secrets
+jira_secrets.env
+.env
+backend/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+
+# Outputs
+teams.json
+teams.csv
+team_members.csv
+raw_jira_search_response.json
+
+# Database
+*.db
+*.db-journal
+

@@ -1,0 +1,229 @@
+:root{
+  --bg:#0b1020;
+  --card:#111a33;
+  --text:#e9eefc;
+  --muted:#a9b3d6;
+  --border:#21305e;
+  --primary:#5b8cff;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  background: radial-gradient(1200px 700px at 10% 0%, #14204a 0%, var(--bg) 60%);
+  color:var(--text);
+}
+.container{max-width:980px;margin:0 auto;padding:28px}
+.header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+h1{margin:6px 0 6px;font-size:28px}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.card{
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.link-card{display:block;text-decoration:none;color:inherit;transition:transform .08s ease, border-color .08s ease}
+.link-card:hover{transform:translateY(-1px);border-color:#3350a8}
+.card-title{font-weight:700;font-size:16px;margin-bottom:6px}
+.button{
+  background: transparent;
+  border:1px solid var(--border);
+  color:var(--text);
+  padding:10px 12px;
+  border-radius:10px;
+  cursor:pointer;
+}
+.button.primary{background:var(--primary);border-color:rgba(255,255,255,0.15);color:#08112a;font-weight:700}
+.button:hover{border-color:#3350a8}
+.toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px}
+.input{
+  width:100%;
+  background: rgba(0,0,0,0.2);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:10px 12px;
+  color:var(--text);
+}
+.list{display:flex;flex-direction:column;gap:8px;max-height:65vh;overflow:auto;padding-right:6px}
+.row{display:flex;gap:12px;align-items:flex-start;padding:10px;border:1px solid var(--border);border-radius:12px;background:rgba(0,0,0,0.14)}
+.row input{margin-top:4px}
+.row-title{font-weight:650}
+.row-main{display:flex;flex-direction:column;gap:2px}
+.code{
+  white-space:pre-wrap;
+  background: rgba(0,0,0,0.25);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:12px;
+  overflow:auto;
+}
+.error{
+  border-color:#ff5b5b;
+  background: linear-gradient(180deg, rgba(255,91,91,0.12), rgba(255,91,91,0.06));
+}
+.error pre{
+  margin:8px 0 0;
+  white-space:pre-wrap;
+  font-size:13px;
+  color:#ff9b9b;
+}
+.tab-button{
+  transition:all 0.2s;
+}
+.tab-button:hover{
+  background:rgba(0,0,0,0.05)!important;
+}
+.tab-button.active{
+  color:inherit!important;
+}
+.tab-content{
+  margin-top:0;
+  width:100%;
+  box-sizing:border-box;
+}
+
+/* Стили для date picker */
+input[type="date"].date-picker-input,
+input.date-picker-input[type="date"] {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1.5px solid var(--border) !important;
+  border-radius: 8px !important;
+  padding: 8px 12px !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  min-width: 160px !important;
+  transition: all 0.2s ease !important;
+  font-family: inherit !important;
+}
+
+input[type="date"].date-picker-input:hover,
+input.date-picker-input[type="date"]:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--primary) !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+}
+
+input[type="date"].date-picker-input:focus,
+input.date-picker-input[type="date"]:focus {
+  outline: none !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.2) !important;
+}
+
+input[type="date"].date-picker-input::-webkit-calendar-picker-indicator,
+input.date-picker-input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer !important;
+  opacity: 0.7 !important;
+  filter: invert(1) !important;
+  transition: opacity 0.2s ease !important;
+  width: 18px !important;
+  height: 18px !important;
+}
+
+input[type="date"].date-picker-input:hover::-webkit-calendar-picker-indicator,
+input.date-picker-input[type="date"]:hover::-webkit-calendar-picker-indicator {
+  opacity: 1 !important;
+}
+
+input[type="date"].date-picker-input::-webkit-datetime-edit-text,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-text {
+  color: var(--muted) !important;
+  padding: 0 2px !important;
+}
+
+input[type="date"].date-picker-input::-webkit-datetime-edit-month-field,
+input[type="date"].date-picker-input::-webkit-datetime-edit-day-field,
+input[type="date"].date-picker-input::-webkit-datetime-edit-year-field,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-month-field,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-day-field,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-year-field {
+  color: var(--text) !important;
+  padding: 0 2px !important;
+}
+
+input[type="date"].date-picker-input::-webkit-datetime-edit-month-field:focus,
+input[type="date"].date-picker-input::-webkit-datetime-edit-day-field:focus,
+input[type="date"].date-picker-input::-webkit-datetime-edit-year-field:focus,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-month-field:focus,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-day-field:focus,
+input.date-picker-input[type="date"]::-webkit-datetime-edit-year-field:focus {
+  background: rgba(91, 140, 255, 0.2) !important;
+  border-radius: 4px !important;
+  color: var(--primary) !important;
+}
+
+/* Стили для статуса сохранения */
+.release-date-status {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  display: inline-block;
+  min-width: 80px;
+  text-align: center;
+}
+
+/* Стили для кнопки "Сохранить" */
+.save-date-button {
+  background: var(--primary);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #08112a;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.save-date-button:hover {
+  background: #4a7aff;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(91, 140, 255, 0.3);
+}
+
+.save-date-button:active {
+  transform: translateY(0);
+}
+
+.save-date-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Стили для кнопки "Отмена" */
+.cancel-date-button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.cancel-date-button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--muted);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.cancel-date-button:active {
+  transform: translateY(0);
+}
+

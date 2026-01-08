@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Команды</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div>
+        <h1>Команды</h1>
+        <p class="muted">Выберите команду, чтобы назначить сотрудников и перейти к следующему шагу.</p>
+      </div>
+      <form method="post" action="/sync">
+        <button class="button" type="submit">Синхронизировать из Jira</button>
+      </form>
+    </header>
+
+    {% if sync_error %}
+      <div class="card error">
+        <p><b>Ошибка синхронизации:</b></p>
+        <pre>{{ sync_error }}</pre>
+        <p class="muted">Проверьте, что файл jira_secrets.env заполнен и доступен.</p>
+      </div>
+    {% endif %}
+
+    {% if not teams %}
+      <div class="card">
+        <p><b>Команд пока нет.</b></p>
+        <p class="muted">Нажмите “Синхронизировать из Jira”, либо добавим ручное создание позже.</p>
+      </div>
+    {% else %}
+      <div class="grid">
+        {% for t in teams %}
+          <a class="card link-card" href="/teams/{{ t.id }}">
+            <div class="card-title">{{ t.name }}</div>
+            <div class="muted">ID: {{ t.id }}</div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+</body>
+</html>
+
+

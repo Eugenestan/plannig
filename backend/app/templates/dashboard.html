@@ -1,0 +1,1154 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Дашборд — {{ team.name }}</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div>
+        <a class="muted" href="/teams/{{ team.id }}">&larr; назад к выбору сотрудников</a>
+        <h1>Дашборд: {{ team.name }}</h1>
+        <p class="muted">Метрики и аналитика команды</p>
+      </div>
+    </header>
+
+    <!-- Табы -->
+    <div class="card" style="margin-bottom: 0; border-bottom: none; border-radius: 14px 14px 0 0; padding: 0; max-width: 980px; margin-left: auto; margin-right: auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div style="display: flex; gap: 0; border-bottom: 1px solid var(--border);">
+        <button id="tab-time" class="tab-button active" onclick="switchTab('time')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid var(--primary); cursor: pointer; font-weight: 600;">
+          Списано времени
+        </button>
+        <button id="tab-epics" class="tab-button" onclick="switchTab('epics')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Эпики
+        </button>
+        <button id="tab-releases" class="tab-button" onclick="switchTab('releases')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Релизы
+        </button>
+        <button id="tab-done" class="tab-button" onclick="switchTab('done')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Done
+        </button>
+        <button id="tab-no-release" class="tab-button" onclick="switchTab('no-release')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Без релиза
+        </button>
+      </div>
+    </div>
+
+    <!-- Таб: Списано времени -->
+    <div id="tab-content-time" class="tab-content" style="max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar">
+          <h2>Списано времени</h2>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <label for="days" class="muted">Период:</label>
+            <select id="days" class="input" style="width: auto; padding: 6px 10px;" onchange="window.location.href='?days=' + this.value">
+              <option value="today" {% if days == 'today' %}selected{% endif %}>Сегодня</option>
+              <option value="yesterday" {% if days == 'yesterday' %}selected{% endif %}>Вчера</option>
+              <option value="8" {% if days == '8' %}selected{% endif %}>За последние 8 дней</option>
+            </select>
+          </div>
+        </div>
+
+      <div id="worklog-loading" style="text-align: center; padding: 20px;">
+        <p class="muted">Загрузка данных...</p>
+      </div>
+      <div id="worklog-error" style="display: none;"></div>
+      <div id="worklog-content" style="display: none;">
+        <div style="overflow-x: auto; margin: 0 -16px; padding: 0 16px;">
+          <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <th style="text-align: left; padding: 10px;">Сотрудник</th>
+                <th style="text-align: right; padding: 10px;">Часов</th>
+                <th style="text-align: right; padding: 10px;">Записей</th>
+              </tr>
+            </thead>
+            <tbody id="worklog-tbody">
+            </tbody>
+            <tfoot id="worklog-tfoot">
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <!-- Таб: Эпики -->
+    <div id="tab-content-epics" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar">
+          <h2>Эпики</h2>
+        </div>
+
+        <div id="epics-loading" style="text-align: center; padding: 20px;">
+          <p class="muted">Загрузка данных...</p>
+        </div>
+        <div id="epics-error" style="display: none;"></div>
+        <div id="epics-content" style="display: none;">
+          <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border);">
+                  <th style="text-align: left; padding: 10px;">Ключ</th>
+                  <th style="text-align: left; padding: 10px;">Название</th>
+                  <th style="text-align: left; padding: 10px;">Статус</th>
+                  <th style="text-align: left; padding: 10px;">Обновлено</th>
+                  <th style="text-align: left; padding: 10px;">Создано</th>
+                </tr>
+              </thead>
+              <tbody id="epics-tbody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <!-- Таб: Релизы -->
+    <div id="tab-content-releases" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar">
+          <h2>Релизы</h2>
+        </div>
+
+        <div id="releases-loading" style="text-align: center; padding: 20px;">
+          <p class="muted">Загрузка данных...</p>
+        </div>
+        <div id="releases-error" style="display: none;"></div>
+        <div id="releases-content" style="display: none;">
+          <div style="overflow-x: auto; max-width: 100%;">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 12px; max-width: 100%; table-layout: fixed;">
+              <colgroup>
+                <col style="width: 60%;">
+                <col style="width: 40%;">
+              </colgroup>
+              <thead>
+                <tr style="border-bottom: 1px solid var(--border);">
+                  <th style="text-align: left; padding: 10px;">Название эпика</th>
+                  <th style="text-align: left; padding: 10px;">Дата релиза</th>
+                </tr>
+              </thead>
+              <tbody id="releases-tbody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Таб: Done -->
+    <div id="tab-content-done" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar">
+          <h2>Выполненные задачи</h2>
+        </div>
+        
+        <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 200px;">
+            <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Сотрудник:</label>
+            <select id="done-user-select" class="input" style="width: 100%;" onchange="loadDoneTasks()">
+              <option value="">Выберите сотрудника</option>
+            </select>
+          </div>
+          <div style="flex: 1; min-width: 200px;">
+            <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Период:</label>
+            <select id="done-period-select" class="input" style="width: 100%;" onchange="loadDoneTasks()">
+              <option value="today">Сегодня</option>
+              <option value="yesterday">Вчера</option>
+              <option value="week">За неделю</option>
+            </select>
+          </div>
+        </div>
+        
+        <div id="done-loading" style="text-align: center; padding: 40px; color: var(--muted);">
+          Выберите сотрудника и период для загрузки задач
+        </div>
+        <div id="done-error" style="display: none;"></div>
+        <div id="done-content" style="display: none;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 2px solid var(--border);">
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Задача</th>
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Название</th>
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Дата завершения</th>
+              </tr>
+            </thead>
+            <tbody id="done-tbody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Таб: Без релиза -->
+    <div id="tab-content-no-release" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar">
+          <h2>Задачи без релиза</h2>
+        </div>
+        
+        <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
+          <div style="flex: 1; min-width: 200px;">
+            <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Сотрудник:</label>
+            <select id="no-release-user-select" class="input" style="width: 100%;" onchange="loadNoReleaseTasks()">
+              <option value="">Все сотрудники</option>
+            </select>
+          </div>
+        </div>
+        
+        <div id="no-release-loading" style="text-align: center; padding: 40px; color: var(--muted);">
+          Выберите сотрудника для загрузки задач
+        </div>
+        <div id="no-release-error" style="display: none;"></div>
+        <div id="no-release-content" style="display: none;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 2px solid var(--border);">
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Задача</th>
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Название</th>
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Исполнитель</th>
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Создано</th>
+              </tr>
+            </thead>
+            <tbody id="no-release-tbody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const days = {{ days|tojson }};
+    const teamId = {{ team.id }};
+    
+    async function loadWorklog() {
+      const loading = document.getElementById('worklog-loading');
+      const errorDiv = document.getElementById('worklog-error');
+      const content = document.getElementById('worklog-content');
+      const tbody = document.getElementById('worklog-tbody');
+      const tfoot = document.getElementById('worklog-tfoot');
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
+        let response;
+        try {
+          response = await fetch(`/api/teams/${teamId}/worklog?days=${days}`, {
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          if (fetchError.name === 'AbortError') {
+            throw new Error('Запрос превысил время ожидания');
+          }
+          throw fetchError;
+        }
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        loading.style.display = 'none';
+        
+        if (!result.success) {
+          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        const data = result.data || [];
+        if (data.length === 0) {
+          errorDiv.innerHTML = '<p class="muted">Нет данных о списанном времени за выбранный период.</p>';
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Заполняем таблицу
+        let html = '';
+        let totalHours = 0;
+        let totalEntries = 0;
+        
+        data.forEach((item, idx) => {
+          totalHours += item.total_hours;
+          totalEntries += item.entries.length;
+          html += `
+            <tr style="border-bottom: 1px solid var(--border); cursor: pointer;" onclick="toggleDetails(${idx})">
+              <td style="padding: 10px;">
+                <div style="font-weight: 600;">${escapeHtml(item.user_name)}</div>
+                <div class="muted" style="font-size: 12px;">${escapeHtml(item.user_account_id)}</div>
+              </td>
+              <td style="text-align: right; padding: 10px; font-weight: 600;">
+                ${item.total_hours.toFixed(1)} ч
+              </td>
+              <td style="text-align: right; padding: 10px; color: var(--muted);">
+                ${item.entries.length}
+              </td>
+            </tr>
+            <tr id="details-${idx}" style="display: none; background: rgba(0,0,0,0.1);">
+              <td colspan="3" style="padding: 10px 10px 10px 30px;">
+                <div style="font-size: 13px;">
+                  ${formatEntries(item.entries, days)}
+                </div>
+              </td>
+            </tr>
+          `;
+        });
+        
+        tbody.innerHTML = html;
+        tfoot.innerHTML = `
+          <tr style="border-top: 2px solid var(--border); font-weight: 600;">
+            <td style="padding: 10px;">Всего</td>
+            <td style="text-align: right; padding: 10px;">${totalHours.toFixed(1)} ч</td>
+            <td style="text-align: right; padding: 10px;">${totalEntries}</td>
+          </tr>
+        `;
+        
+        content.style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        let errorMsg = e.message || 'Неизвестная ошибка';
+        if (e.name === 'AbortError') {
+          errorMsg = 'Запрос превысил время ожидания (3 минуты). Возможно, Jira API медленно отвечает. Попробуйте еще раз или выберите другой период.';
+        } else if (e.message && e.message.includes('HTTP')) {
+          errorMsg = e.message;
+        }
+        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p><p style="font-size: 12px; color: var(--muted); margin-top: 8px;">Если проблема повторяется, проверьте подключение к Jira API или попробуйте выбрать другой период.</p></div>`;
+        errorDiv.style.display = 'block';
+        console.error('Worklog loading error:', e);
+      }
+    }
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
+    
+    function formatDate(dateStr) {
+      // Преобразуем "2025-12-29" в "29.12"
+      if (!dateStr) return '';
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        return `${parts[2]}.${parts[1]}`;
+      }
+      return dateStr;
+    }
+    
+    function formatEntries(entries, period) {
+      // Если период "8 дней", группируем по датам
+      if (period === '8' || period === 8) {
+        // Группируем записи по датам
+        const groupedByDate = {};
+        entries.forEach(entry => {
+          const date = entry.worklog_date || (entry.started ? entry.started.substring(0, 10) : '');
+          if (!date) return;
+          
+          if (!groupedByDate[date]) {
+            groupedByDate[date] = {
+              date: date,
+              entries: [],
+              totalSeconds: 0
+            };
+          }
+          groupedByDate[date].entries.push(entry);
+          groupedByDate[date].totalSeconds += entry.time_spent_seconds || 0;
+        });
+        
+        // Сортируем даты по убыванию
+        const sortedDates = Object.keys(groupedByDate).sort().reverse();
+        
+        return sortedDates.map(date => {
+          const group = groupedByDate[date];
+          const totalHours = group.totalSeconds / 3600;
+          
+          return `
+            <div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid rgba(255,255,255,0.2);">
+              <div style="font-weight: 600; margin-bottom: 8px; font-size: 14px;">
+                ${formatDate(date)} - ${totalHours.toFixed(1)} часов
+              </div>
+              <div style="margin-left: 12px;">
+                ${group.entries.map(entry => `
+                  <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                    <div style="display: flex; justify-content: space-between;">
+                      <div>
+                        <strong>${escapeHtml(entry.issue_key)}</strong>: ${escapeHtml((entry.issue_summary || '').substring(0, 60))}${(entry.issue_summary || '').length > 60 ? '...' : ''}
+                        ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(entry.comment.substring(0, 100))}${entry.comment.length > 100 ? '...' : ''}</div>` : ''}
+                      </div>
+                      <div style="text-align: right; margin-left: 12px;">
+                        <div>${escapeHtml(entry.time_spent || '')}</div>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }).join('');
+      } else {
+        // Для других периодов показываем просто список
+        return entries.map(entry => `
+          <div style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <div style="display: flex; justify-content: space-between;">
+              <div>
+                <strong>${escapeHtml(entry.issue_key)}</strong>: ${escapeHtml((entry.issue_summary || '').substring(0, 60))}${(entry.issue_summary || '').length > 60 ? '...' : ''}
+                ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(entry.comment.substring(0, 100))}${entry.comment.length > 100 ? '...' : ''}</div>` : ''}
+              </div>
+              <div style="text-align: right; margin-left: 12px;">
+                <div>${escapeHtml(entry.time_spent || '')}</div>
+                <div class="muted" style="font-size: 11px;">
+                  ${entry.started ? escapeHtml(entry.started.substring(0, 10)) : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+    
+    function toggleDetails(index) {
+      const row = document.getElementById('details-' + index);
+      if (row.style.display === 'none') {
+        row.style.display = 'table-row';
+      } else {
+        row.style.display = 'none';
+      }
+    }
+    
+    // Функция переключения табов
+    function switchTab(tabName) {
+      // Скрываем все табы
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.style.display = 'none';
+      });
+      document.querySelectorAll('.tab-button').forEach(btn => {
+        btn.classList.remove('active');
+        btn.style.borderBottom = '2px solid transparent';
+        btn.style.color = 'var(--muted)';
+      });
+      
+      // Показываем выбранный таб
+      const content = document.getElementById('tab-content-' + tabName);
+      const button = document.getElementById('tab-' + tabName);
+      if (content) {
+        content.style.display = 'block';
+      }
+      if (button) {
+        button.classList.add('active');
+        button.style.borderBottom = '2px solid var(--primary)';
+        button.style.color = 'inherit';
+      }
+      
+      // Загружаем данные для таба "Эпики" при первом открытии
+      if (tabName === 'epics' && !window.epicsLoaded) {
+        loadEpics();
+        window.epicsLoaded = true;
+      }
+      
+      // Загружаем данные для таба "Релизы" при первом открытии
+      if (tabName === 'releases' && !window.releasesLoaded) {
+        loadReleases();
+        window.releasesLoaded = true;
+      }
+      
+      // Загружаем данные для таба "Done" при первом открытии
+      if (tabName === 'done') {
+        loadDoneUsers();
+      }
+      
+      // Загружаем данные для таба "Без релиза" при первом открытии
+      if (tabName === 'no-release') {
+        loadNoReleaseUsers();
+      }
+    }
+    
+    // Функция загрузки эпиков
+    async function loadEpics() {
+      const loading = document.getElementById('epics-loading');
+      const errorDiv = document.getElementById('epics-error');
+      const content = document.getElementById('epics-content');
+      const tbody = document.getElementById('epics-tbody');
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
+        const response = await fetch(`/api/teams/${teamId}/epics`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const result = await response.json();
+        
+        loading.style.display = 'none';
+        
+        if (!result.success) {
+          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        const epics = result.data || [];
+        if (epics.length === 0) {
+          errorDiv.innerHTML = '<p class="muted">Нет эпиков для отображения.</p>';
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Форматируем даты
+        function formatDate(dateStr) {
+          if (!dateStr) return '';
+          const date = new Date(dateStr);
+          return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+        
+        // Заполняем таблицу
+        let html = '';
+        epics.forEach((epic, idx) => {
+          html += `
+            <tr style="border-bottom: 1px solid var(--border); cursor: pointer;" onclick="toggleEpicIssues(${idx}, '${escapeHtml(epic.key)}')">
+              <td style="padding: 10px;">
+                <a href="https://topntop.atlassian.net/browse/${escapeHtml(epic.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;" onclick="event.stopPropagation();">
+                  ${escapeHtml(epic.key)}
+                </a>
+              </td>
+              <td style="padding: 10px;">${escapeHtml(epic.summary || '')}</td>
+              <td style="padding: 10px;">${escapeHtml(epic.status || '')}</td>
+              <td style="padding: 10px; color: var(--muted); font-size: 13px;">${formatDate(epic.updated)}</td>
+              <td style="padding: 10px; color: var(--muted); font-size: 13px;">${formatDate(epic.created)}</td>
+            </tr>
+            <tr id="epic-issues-${idx}" style="display: none; background: rgba(0,0,0,0.1);">
+              <td colspan="5" style="padding: 10px 10px 10px 30px;">
+                <div id="epic-issues-loading-${idx}" style="text-align: center; padding: 10px;">
+                  <p class="muted" style="font-size: 13px;">Загрузка задач...</p>
+                </div>
+                <div id="epic-issues-content-${idx}" style="display: none;">
+                  <div style="font-size: 13px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                      <thead>
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.2);">
+                          <th style="text-align: left; padding: 8px; font-size: 12px; color: var(--muted);">Задача</th>
+                          <th style="text-align: left; padding: 8px; font-size: 12px; color: var(--muted);">Ответственный</th>
+                          <th style="text-align: right; padding: 8px; font-size: 12px; color: var(--muted);">Исходная оценка</th>
+                          <th style="text-align: right; padding: 8px; font-size: 12px; color: var(--muted);">Списано времени</th>
+                        </tr>
+                      </thead>
+                      <tbody id="epic-issues-tbody-${idx}">
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div id="epic-issues-error-${idx}" style="display: none;"></div>
+              </td>
+            </tr>
+          `;
+        });
+        
+        tbody.innerHTML = html;
+        content.style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        let errorMsg = e.message;
+        if (e.name === 'AbortError') {
+          errorMsg = 'Запрос превысил время ожидания. Попробуйте еще раз.';
+        }
+        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
+        errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Функция переключения задач эпика
+    async function toggleEpicIssues(index, epicKey) {
+      const row = document.getElementById('epic-issues-' + index);
+      const loading = document.getElementById('epic-issues-loading-' + index);
+      const content = document.getElementById('epic-issues-content-' + index);
+      const errorDiv = document.getElementById('epic-issues-error-' + index);
+      const tbody = document.getElementById('epic-issues-tbody-' + index);
+      
+      if (row.style.display === 'none') {
+        // Разворачиваем
+        row.style.display = 'table-row';
+        
+        // Если данные еще не загружены, загружаем их
+        if (!row.dataset.loaded) {
+          loading.style.display = 'block';
+          content.style.display = 'none';
+          errorDiv.style.display = 'none';
+          
+          try {
+            const response = await fetch(`/api/epics/${epicKey}/issues`);
+            const result = await response.json();
+            
+            loading.style.display = 'none';
+            
+            if (!result.success) {
+              errorDiv.innerHTML = `<p class="muted" style="font-size: 13px; color: #ff5b5b;">Ошибка: ${escapeHtml(result.error)}</p>`;
+              errorDiv.style.display = 'block';
+              return;
+            }
+            
+            const issues = result.data || [];
+            if (issues.length === 0) {
+              errorDiv.innerHTML = '<p class="muted" style="font-size: 13px;">Нет задач в этом эпике.</p>';
+              errorDiv.style.display = 'block';
+              return;
+            }
+            
+            // Заполняем таблицу задач
+            let html = '';
+            issues.forEach(issue => {
+              html += `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                  <td style="padding: 8px;">
+                    <a href="https://topntop.atlassian.net/browse/${escapeHtml(issue.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                      ${escapeHtml(issue.key)}
+                    </a>
+                    <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">
+                      ${escapeHtml(issue.summary || '')}
+                    </div>
+                  </td>
+                  <td style="padding: 8px;">${escapeHtml(issue.assignee || 'Не назначен')}</td>
+                  <td style="text-align: right; padding: 8px;">${issue.original_estimate_hours > 0 ? issue.original_estimate_hours.toFixed(1) + ' ч' : '-'}</td>
+                  <td style="text-align: right; padding: 8px;">${issue.time_spent_hours > 0 ? issue.time_spent_hours.toFixed(1) + ' ч' : '-'}</td>
+                </tr>
+              `;
+            });
+            
+            tbody.innerHTML = html;
+            content.style.display = 'block';
+            row.dataset.loaded = 'true';
+          } catch (e) {
+            loading.style.display = 'none';
+            errorDiv.innerHTML = `<p class="muted" style="font-size: 13px; color: #ff5b5b;">Ошибка загрузки: ${escapeHtml(e.message)}</p>`;
+            errorDiv.style.display = 'block';
+          }
+        }
+      } else {
+        // Сворачиваем
+        row.style.display = 'none';
+      }
+    }
+    
+    // Функция загрузки релизов
+    async function loadReleases() {
+      const loading = document.getElementById('releases-loading');
+      const errorDiv = document.getElementById('releases-error');
+      const content = document.getElementById('releases-content');
+      const tbody = document.getElementById('releases-tbody');
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
+        const response = await fetch(`/api/teams/${teamId}/releases`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const result = await response.json();
+        
+        loading.style.display = 'none';
+        
+        if (!result.success) {
+          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        const releases = result.data || [];
+        if (releases.length === 0) {
+          errorDiv.innerHTML = '<p class="muted">Нет релизов для отображения.</p>';
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Форматируем даты
+        function formatDate(dateStr) {
+          if (!dateStr) return '';
+          const date = new Date(dateStr + 'T00:00:00');
+          return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+        
+        // Проверяем, просрочен ли релиз
+        function isOverdue(releaseDateStr) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const releaseDate = new Date(releaseDateStr + 'T00:00:00');
+          return releaseDate < today;
+        }
+        
+        // Заполняем таблицу
+        let html = '';
+        releases.forEach((release, idx) => {
+          const isOverdueRelease = isOverdue(release.release_date);
+          const borderStyle = isOverdueRelease ? 'border-left: 3px solid #ff5b5b;' : '';
+          
+          html += `
+            <tr style="border-bottom: 1px solid var(--border); ${borderStyle}">
+              <td style="padding: 10px; word-wrap: break-word; max-width: 0;">
+                <a href="https://topntop.atlassian.net/browse/${escapeHtml(release.epic_key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                  ${escapeHtml(release.epic_key)}
+                </a>
+                <div style="font-size: 13px; color: var(--muted); margin-top: 4px; word-wrap: break-word;">
+                  ${escapeHtml(release.epic_summary || '')}
+                </div>
+              </td>
+              <td style="padding: 10px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <div style="position: relative; display: inline-block;">
+                    <input 
+                      type="date" 
+                      id="release-date-${idx}" 
+                      value="${release.release_date}" 
+                      class="date-picker-input"
+                      data-original-date="${release.release_date}"
+                      onclick="showSaveButton(${idx})"
+                    />
+                  </div>
+                  <button 
+                    id="save-btn-${idx}" 
+                    class="save-date-button"
+                    style="display: none;"
+                    onclick="saveReleaseDate('${escapeHtml(release.epic_key)}', ${idx})"
+                  >
+                    Сохранить
+                  </button>
+                  <button 
+                    id="cancel-btn-${idx}" 
+                    class="cancel-date-button"
+                    style="display: none;"
+                    onclick="cancelDateChange(${idx})"
+                  >
+                    Отмена
+                  </button>
+                  <span id="release-date-status-${idx}" class="release-date-status"></span>
+                </div>
+                ${release.version_name ? `<div style="font-size: 12px; color: var(--muted); margin-top: 4px;">${escapeHtml(release.version_name)}</div>` : ''}
+                ${isOverdueRelease ? '<div style="font-size: 12px; color: #ff5b5b; margin-top: 2px;">Просрочено</div>' : ''}
+              </td>
+            </tr>
+          `;
+        });
+        
+        tbody.innerHTML = html;
+        content.style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        let errorMsg = e.message;
+        if (e.name === 'AbortError') {
+          errorMsg = 'Запрос превысил время ожидания. Попробуйте еще раз.';
+        }
+        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
+        errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Функция обновления даты релиза
+    async function updateReleaseDate(epicKey, newDate, index) {
+      const statusEl = document.getElementById('release-date-status-' + index);
+      statusEl.textContent = 'Сохранение...';
+      statusEl.style.color = 'var(--muted)';
+      
+      try {
+        const response = await fetch(`/api/epics/${epicKey}/release-date`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ release_date: newDate })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          statusEl.textContent = '✓ Сохранено';
+          statusEl.style.color = '#5bff8c';
+          setTimeout(() => {
+            statusEl.textContent = '';
+          }, 2000);
+          
+          // Перезагружаем список релизов, чтобы обновить статус просроченных
+          loadReleases();
+        } else {
+          statusEl.textContent = '✗ Ошибка';
+          statusEl.style.color = '#ff5b5b';
+          alert('Ошибка обновления даты: ' + result.error);
+        }
+      } catch (e) {
+        statusEl.textContent = '✗ Ошибка';
+        statusEl.style.color = '#ff5b5b';
+        alert('Ошибка обновления даты: ' + e.message);
+      }
+    }
+    
+    // Функция показа кнопок "Сохранить" и "Отмена"
+    function showSaveButton(index) {
+      const saveBtn = document.getElementById('save-btn-' + index);
+      const cancelBtn = document.getElementById('cancel-btn-' + index);
+      const dateInput = document.getElementById('release-date-' + index);
+      const originalDate = dateInput.getAttribute('data-original-date');
+      const currentDate = dateInput.value;
+      
+      // Показываем кнопки только если дата изменилась
+      if (currentDate !== originalDate) {
+        saveBtn.style.display = 'inline-block';
+        cancelBtn.style.display = 'inline-block';
+      } else {
+        saveBtn.style.display = 'none';
+        cancelBtn.style.display = 'none';
+      }
+    }
+    
+    // Функция отмены изменения даты
+    function cancelDateChange(index) {
+      const dateInput = document.getElementById('release-date-' + index);
+      const saveBtn = document.getElementById('save-btn-' + index);
+      const cancelBtn = document.getElementById('cancel-btn-' + index);
+      const statusEl = document.getElementById('release-date-status-' + index);
+      const originalDate = dateInput.getAttribute('data-original-date');
+      
+      // Возвращаем исходную дату
+      dateInput.value = originalDate;
+      
+      // Скрываем кнопки
+      saveBtn.style.display = 'none';
+      cancelBtn.style.display = 'none';
+      
+      // Очищаем статус
+      statusEl.textContent = '';
+      statusEl.style.background = '';
+    }
+    
+    // Функция сохранения даты релиза
+    async function saveReleaseDate(epicKey, index) {
+      const dateInput = document.getElementById('release-date-' + index);
+      const saveBtn = document.getElementById('save-btn-' + index);
+      const statusEl = document.getElementById('release-date-status-' + index);
+      const newDate = dateInput.value;
+      
+      if (!newDate) {
+        alert('Выберите дату');
+        return;
+      }
+      
+      // Блокируем кнопку и показываем статус
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Сохранение...';
+      statusEl.textContent = '';
+      
+      try {
+        const response = await fetch(`/api/epics/${epicKey}/release-date`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ release_date: newDate })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          // Обновляем оригинальную дату
+          dateInput.setAttribute('data-original-date', newDate);
+          
+          // Скрываем кнопки
+          const cancelBtn = document.getElementById('cancel-btn-' + index);
+          saveBtn.style.display = 'none';
+          cancelBtn.style.display = 'none';
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Сохранить';
+          
+          // Показываем статус успеха
+          statusEl.textContent = '✓ Сохранено';
+          statusEl.style.color = '#5bff8c';
+          statusEl.style.background = 'rgba(91, 255, 140, 0.15)';
+          setTimeout(() => {
+            statusEl.textContent = '';
+            statusEl.style.background = '';
+          }, 2000);
+          
+          // Перезагружаем список релизов, чтобы обновить статус просроченных
+          setTimeout(() => {
+            loadReleases();
+          }, 500);
+        } else {
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Сохранить';
+          statusEl.textContent = '✗ Ошибка';
+          statusEl.style.color = '#ff5b5b';
+          statusEl.style.background = 'rgba(255, 91, 91, 0.15)';
+          alert('Ошибка обновления даты: ' + result.error);
+        }
+      } catch (e) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Сохранить';
+        statusEl.textContent = '✗ Ошибка';
+        statusEl.style.color = '#ff5b5b';
+        statusEl.style.background = 'rgba(255, 91, 91, 0.15)';
+        alert('Ошибка обновления даты: ' + e.message);
+      }
+    }
+    
+    // Обработчик изменения даты для показа кнопки
+    document.addEventListener('change', function(e) {
+      if (e.target.classList.contains('date-picker-input')) {
+        const index = e.target.id.replace('release-date-', '');
+        showSaveButton(index);
+      }
+    });
+    
+    // Функция загрузки списка сотрудников для таба Done
+    async function loadDoneUsers() {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд
+        const response = await fetch(`/api/teams/${teamId}/users`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          const select = document.getElementById('done-user-select');
+          if (select) {
+            select.innerHTML = '<option value="">Выберите сотрудника</option>';
+            
+            result.data.forEach(user => {
+              const option = document.createElement('option');
+              option.value = user.jira_account_id || '';
+              option.textContent = user.display_name || user.name || 'Без имени';
+              select.appendChild(option);
+            });
+          }
+        } else {
+          console.error('Ошибка загрузки сотрудников:', result.error || 'Неизвестная ошибка');
+        }
+      } catch (e) {
+        console.error('Ошибка загрузки сотрудников:', e);
+        if (e.name === 'AbortError') {
+          console.error('Запрос превысил время ожидания');
+        }
+      }
+    }
+    
+    // Функция загрузки выполненных задач
+    async function loadDoneTasks() {
+      const userSelect = document.getElementById('done-user-select');
+      const periodSelect = document.getElementById('done-period-select');
+      const loading = document.getElementById('done-loading');
+      const errorDiv = document.getElementById('done-error');
+      const content = document.getElementById('done-content');
+      const tbody = document.getElementById('done-tbody');
+      
+      const userId = userSelect.value;
+      const period = periodSelect.value;
+      
+      if (!userId) {
+        loading.style.display = 'block';
+        errorDiv.style.display = 'none';
+        content.style.display = 'none';
+        loading.textContent = 'Выберите сотрудника и период для загрузки задач';
+        return;
+      }
+      
+      loading.style.display = 'block';
+      loading.textContent = 'Загрузка задач...';
+      errorDiv.style.display = 'none';
+      content.style.display = 'none';
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
+        const response = await fetch(`/api/teams/${teamId}/done?user_id=${encodeURIComponent(userId)}&period=${period}`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const result = await response.json();
+        
+        loading.style.display = 'none';
+        
+        if (!result.success) {
+          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        const tasks = result.data || [];
+        if (tasks.length === 0) {
+          errorDiv.innerHTML = '<p class="muted">Нет выполненных задач за выбранный период.</p>';
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Заполняем таблицу
+        let html = '';
+        tasks.forEach(task => {
+          html += `
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 10px;">
+                <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                  ${escapeHtml(task.key)}
+                </a>
+              </td>
+              <td style="padding: 10px;">
+                ${escapeHtml(task.summary || '')}
+              </td>
+              <td style="padding: 10px;">
+                ${task.resolved_date ? formatDate(task.resolved_date) : '-'}
+              </td>
+            </tr>
+          `;
+        });
+        
+        tbody.innerHTML = html;
+        content.style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        let errorMsg = e.message;
+        if (e.name === 'AbortError') {
+          errorMsg = 'Запрос превысил время ожидания. Попробуйте еще раз.';
+        }
+        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
+        errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Функция загрузки списка сотрудников для таба "Без релиза"
+    async function loadNoReleaseUsers() {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд
+        const response = await fetch(`/api/teams/${teamId}/users`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          const select = document.getElementById('no-release-user-select');
+          if (select) {
+            select.innerHTML = '<option value="">Все сотрудники</option>';
+            
+            result.data.forEach(user => {
+              const option = document.createElement('option');
+              option.value = user.jira_account_id || '';
+              option.textContent = user.display_name || user.name || 'Без имени';
+              select.appendChild(option);
+            });
+          }
+        } else {
+          console.error('Ошибка загрузки сотрудников:', result.error || 'Неизвестная ошибка');
+        }
+      } catch (e) {
+        console.error('Ошибка загрузки сотрудников:', e);
+        if (e.name === 'AbortError') {
+          console.error('Запрос превысил время ожидания');
+        }
+      }
+    }
+    
+    // Функция загрузки задач без релиза
+    async function loadNoReleaseTasks() {
+      const userSelect = document.getElementById('no-release-user-select');
+      const loading = document.getElementById('no-release-loading');
+      const errorDiv = document.getElementById('no-release-error');
+      const content = document.getElementById('no-release-content');
+      const tbody = document.getElementById('no-release-tbody');
+      
+      const userId = userSelect.value;
+      
+      loading.style.display = 'block';
+      loading.textContent = 'Загрузка задач...';
+      errorDiv.style.display = 'none';
+      content.style.display = 'none';
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
+        const url = userId 
+          ? `/api/teams/${teamId}/no-release?user_id=${encodeURIComponent(userId)}`
+          : `/api/teams/${teamId}/no-release`;
+        const response = await fetch(url, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const result = await response.json();
+        
+        loading.style.display = 'none';
+        
+        if (!result.success) {
+          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        const tasks = result.data || [];
+        if (tasks.length === 0) {
+          errorDiv.innerHTML = '<p class="muted">Нет задач без релиза.</p>';
+          errorDiv.style.display = 'block';
+          return;
+        }
+        
+        // Функция форматирования даты
+        function formatDate(dateStr) {
+          if (!dateStr) return '-';
+          const date = new Date(dateStr);
+          return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+        
+        // Заполняем таблицу
+        let html = '';
+        tasks.forEach(task => {
+          html += `
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 10px;">
+                <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                  ${escapeHtml(task.key)}
+                </a>
+              </td>
+              <td style="padding: 10px;">
+                ${escapeHtml(task.summary || '')}
+              </td>
+              <td style="padding: 10px;">
+                ${escapeHtml(task.assignee || '-')}
+              </td>
+              <td style="padding: 10px;">
+                ${formatDate(task.created)}
+              </td>
+            </tr>
+          `;
+        });
+        
+        tbody.innerHTML = html;
+        content.style.display = 'block';
+      } catch (e) {
+        loading.style.display = 'none';
+        let errorMsg = e.message;
+        if (e.name === 'AbortError') {
+          errorMsg = 'Запрос превысил время ожидания. Попробуйте еще раз.';
+        }
+        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
+        errorDiv.style.display = 'block';
+      }
+    }
+    
+    // Загружаем данные при загрузке страницы
+    loadWorklog();
+  </script>
+</body>
+</html>
+
+

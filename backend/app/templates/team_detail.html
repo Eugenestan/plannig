@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ team.name }} — сотрудники</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div>
+        <a class="muted" href="/">&larr; все команды</a>
+        <h1>{{ team.name }}</h1>
+        <p class="muted">Выберите сотрудников и нажмите “Продолжить”. Состав хранится в MySQL.</p>
+      </div>
+    </header>
+
+    <form method="post" action="/teams/{{ team.id }}/members">
+      <div class="card">
+        <div class="toolbar">
+          <input id="filter" class="input" type="text" placeholder="Поиск по имени..." oninput="filterUsers()">
+          <button class="button primary" type="submit">Продолжить</button>
+        </div>
+        <div class="list" id="users">
+          {% for u in all_users %}
+            <label class="row user-row" data-name="{{ u.display_name|lower }}">
+              <input type="checkbox" name="user_ids" value="{{ u.id }}" {% if u.id in selected_user_ids %}checked{% endif %}>
+              <div class="row-main">
+                <div class="row-title">{{ u.display_name }}</div>
+                <div class="muted small">{{ u.jira_account_id }}</div>
+              </div>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    function filterUsers() {
+      const q = (document.getElementById('filter').value || '').toLowerCase();
+      const rows = document.querySelectorAll('.user-row');
+      rows.forEach(r => {
+        const name = r.getAttribute('data-name') || '';
+        r.style.display = name.includes(q) ? '' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>
+
+

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 
 from .db import Base, engine, get_db
-from .models import ApiCredential, CredentialTeam, CredentialUser, Team, TeamMember, User
+from .models import ApiCredential, CredentialTeam, CredentialUser, ImproveTaskOrder, Team, TeamMember, User
 from .sync_jira import credential_has_any_team, sync_from_jira_for_credential
 from .worklog_fetcher import get_team_worklog
 from .config import settings
@@ -851,6 +851,161 @@ def api_team_no_release(request: Request, team_id: int, user_id: str = "", db: S
         import traceback
         error_msg = str(e)
         print(f"Get no-release tasks error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+@app.get("/api/teams/{team_id}/improve")
+def api_team_improve(request: Request, team_id: int, db: Session = Depends(get_db)):
+    """API endpoint для получения задач Improve."""
+    from fastapi.responses import JSONResponse
+    from datetime import datetime
+    
+    try:
+        # Подключаемся к Jira с ключом из сессии
+        jira, api_prefix, cred = get_jira_client_for_request(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
+        
+        # JQL запрос для задач Improve
+        # assignee может быть пустым ИЛИ текущим пользователем
+        jql = 'project = SDCS AND type IN (Улучшение, Проблема) AND (assignee IS EMPTY OR assignee = currentUser()) AND status IN (Согласование) ORDER BY created ASC'
+        
+        # Получаем задачи
+        all_tasks = []
+        next_token = ""
+        page_size = 200
+        
+        while True:
+            data = jira.search_jql_page(
+                jql=jql,
+                fields=["key", "summary", "created"],
+                max_results=page_size,
+                next_page_token=next_token
+            )
+            issues = data.get("issues", []) or data.get("values", [])
+            if not issues:
+                break
+            
+            for issue in issues:
+                fields = issue.get("fields", {})
+                created_str = fields.get("created", "")
+                created_date = None
+                
+                if created_str:
+                    try:
+                        # Парсим дату из Jira формата
+                        if isinstance(created_str, str):
+                            date_str = created_str.split('.')[0].split('+')[0].split('Z')[0]
+                            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"]:
+                                try:
+                                    created_date = datetime.strptime(date_str, fmt)
+                                    break
+                                except:
+                                    continue
+                    except Exception as e:
+                        print(f"Error parsing created date {created_str}: {e}")
+                        pass
+                
+                all_tasks.append({
+                    "key": issue.get("key", ""),
+                    "summary": fields.get("summary", ""),
+                    "created": created_date.isoformat() if created_date else None,
+                })
+            
+            next_token = data.get("nextPageToken", "")
+            if not next_token:
+                break
+        
+        # Получаем сохраненный порядок задач для этого credential
+        saved_orders = db.scalars(
+            select(ImproveTaskOrder)
+            .where(ImproveTaskOrder.credential_id == cred.id)
+            .order_by(ImproveTaskOrder.position.asc())
+        ).all()
+        
+        # Создаем словарь: task_key -> position
+        order_map = {order.task_key: order.position for order in saved_orders}
+        
+        # Сортируем задачи: сначала по сохраненному порядку, затем по дате создания
+        def sort_key(task):
+            key = task["key"]
+            if key in order_map:
+                return (0, order_map[key])  # Задачи с сохраненным порядком идут первыми
+            else:
+                # Для новых задач используем дату создания (чем раньше, тем выше)
+                created = task.get("created")
+                if created:
+                    try:
+                        return (1, datetime.fromisoformat(created.replace('Z', '+00:00')).timestamp())
+                    except:
+                        return (2, 0)  # Если не удалось распарсить дату
+                return (2, 0)
+        
+        all_tasks.sort(key=sort_key)
+        
+        return JSONResponse({
+            "success": True,
+            "data": all_tasks,
+        })
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"Get improve tasks error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+@app.post("/api/teams/{team_id}/improve/order")
+async def api_team_improve_order(request: Request, team_id: int, db: Session = Depends(get_db)):
+    """API endpoint для сохранения порядка задач в табе Improve."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
+        
+        # Получаем массив ключей задач в новом порядке
+        body = await request.json()
+        task_keys = body.get("task_keys", [])
+        if not isinstance(task_keys, list):
+            return JSONResponse({"success": False, "error": "task_keys должен быть массивом"}, status_code=400)
+        
+        # Удаляем старые записи для этого credential
+        db.execute(delete(ImproveTaskOrder).where(ImproveTaskOrder.credential_id == cred.id))
+        
+        # Создаем новые записи с новым порядком
+        for position, task_key in enumerate(task_keys):
+            if task_key:
+                order_entry = ImproveTaskOrder(
+                    credential_id=cred.id,
+                    task_key=str(task_key),
+                    position=position
+                )
+                db.add(order_entry)
+        
+        db.commit()
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Порядок сохранен",
+        })
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"Save improve order error: {traceback.format_exc()}")
+        db.rollback()
         return JSONResponse(
             {"success": False, "error": error_msg},
             status_code=500,

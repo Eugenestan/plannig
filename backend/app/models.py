@@ -112,3 +112,24 @@ class CredentialUser(Base):
 
     __table_args__ = (UniqueConstraint("credential_id", "user_id", name="uq_credential_user"),)
 
+
+class ImproveTaskOrder(Base):
+    """
+    Хранение пользовательского порядка задач в табе Improve.
+    Порядок привязан к credential (пользователю/сессии).
+    """
+    
+    __tablename__ = "improve_task_order"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    task_key: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g. "SDCS-123"
+    position: Mapped[int] = mapped_column(Integer, nullable=False)  # Порядковый номер (0, 1, 2, ...)
+    
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    credential: Mapped[ApiCredential] = relationship()
+    
+    __table_args__ = (UniqueConstraint("credential_id", "task_key", name="uq_improve_task_order"),)
+

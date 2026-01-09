@@ -10,7 +10,10 @@
     #days option,
     #done-user-select option,
     #done-period-select option,
-    #no-release-user-select option {
+    #no-release-user-select option,
+    #filter-type-select option,
+    #filter-user-select option,
+    #filter-period-select option {
       color: #000;
       background-color: #fff;
     }
@@ -38,11 +41,8 @@
         <button id="tab-releases" class="tab-button" onclick="switchTab('releases')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
           Релизы
         </button>
-        <button id="tab-done" class="tab-button" onclick="switchTab('done')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
-          Done
-        </button>
-        <button id="tab-no-release" class="tab-button" onclick="switchTab('no-release')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
-          Без релиза
+        <button id="tab-filters" class="tab-button" onclick="switchTab('filters')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Фильтры
         </button>
         <button id="tab-improve" class="tab-button" onclick="switchTab('improve')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
           Improve
@@ -153,23 +153,35 @@
       </div>
     </div>
 
-    <!-- Таб: Done -->
-    <div id="tab-content-done" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+    <!-- Таб: Фильтры -->
+    <div id="tab-content-filters" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
       <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
         <div class="toolbar">
-          <h2>Выполненные задачи</h2>
+          <h2>Фильтры по задачам</h2>
         </div>
         
         <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
           <div style="flex: 1; min-width: 200px;">
+            <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Фильтр:</label>
+            <select id="filter-type-select" class="input" style="width: 100%;" onchange="onFilterTypeChange()">
+              <option value="">Выберите фильтр</option>
+              <option value="done">Закрытые задачи</option>
+              <option value="no-release">Задачи без релиза</option>
+            </select>
+          </div>
+          
+          <!-- Селект сотрудника (появляется при выборе фильтра) -->
+          <div id="filter-user-container" style="flex: 1; min-width: 200px; display: none;">
             <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Сотрудник:</label>
-            <select id="done-user-select" class="input" style="width: 100%;" onchange="loadDoneTasks()">
+            <select id="filter-user-select" class="input" style="width: 100%;" onchange="loadFilterTasks()">
               <option value="">Выберите сотрудника</option>
             </select>
           </div>
-          <div style="flex: 1; min-width: 200px;">
+          
+          <!-- Селект периода (только для "Закрытые задачи") -->
+          <div id="filter-period-container" style="flex: 1; min-width: 200px; display: none;">
             <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Период:</label>
-            <select id="done-period-select" class="input" style="width: 100%;" onchange="loadDoneTasks()">
+            <select id="filter-period-select" class="input" style="width: 100%;" onchange="loadFilterTasks()">
               <option value="today">Сегодня</option>
               <option value="yesterday">Вчера</option>
               <option value="week">За неделю</option>
@@ -177,57 +189,21 @@
           </div>
         </div>
         
-        <div id="done-loading" style="text-align: center; padding: 40px; color: var(--muted);">
-          Выберите сотрудника и период для загрузки задач
+        <div id="filter-loading" style="text-align: center; padding: 40px; color: var(--muted);">
+          Выберите фильтр для загрузки задач
         </div>
-        <div id="done-error" style="display: none;"></div>
-        <div id="done-content" style="display: none;">
+        <div id="filter-error" style="display: none;"></div>
+        <div id="filter-content" style="display: none;">
           <table style="width: 100%; border-collapse: collapse;">
             <thead>
               <tr style="border-bottom: 2px solid var(--border);">
                 <th style="padding: 10px; text-align: left; font-weight: 600;">Задача</th>
                 <th style="padding: 10px; text-align: left; font-weight: 600;">Название</th>
-                <th style="padding: 10px; text-align: left; font-weight: 600;">Дата завершения</th>
+                <th id="filter-th-extra" style="padding: 10px; text-align: left; font-weight: 600; display: none;"></th>
+                <th style="padding: 10px; text-align: left; font-weight: 600;">Дата</th>
               </tr>
             </thead>
-            <tbody id="done-tbody">
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- Таб: Без релиза -->
-    <div id="tab-content-no-release" class="tab-content" style="display: none; max-width: 980px; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
-      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
-        <div class="toolbar">
-          <h2>Задачи без релиза</h2>
-        </div>
-        
-        <div style="display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;">
-          <div style="flex: 1; min-width: 200px;">
-            <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Сотрудник:</label>
-            <select id="no-release-user-select" class="input" style="width: 100%;" onchange="loadNoReleaseTasks()">
-              <option value="">Все сотрудники</option>
-            </select>
-          </div>
-        </div>
-        
-        <div id="no-release-loading" style="text-align: center; padding: 40px; color: var(--muted);">
-          Выберите сотрудника для загрузки задач
-        </div>
-        <div id="no-release-error" style="display: none;"></div>
-        <div id="no-release-content" style="display: none;">
-          <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr style="border-bottom: 2px solid var(--border);">
-                <th style="padding: 10px; text-align: left; font-weight: 600;">Задача</th>
-                <th style="padding: 10px; text-align: left; font-weight: 600;">Название</th>
-                <th style="padding: 10px; text-align: left; font-weight: 600;">Исполнитель</th>
-                <th style="padding: 10px; text-align: left; font-weight: 600;">Создано</th>
-              </tr>
-            </thead>
-            <tbody id="no-release-tbody">
+            <tbody id="filter-tbody">
             </tbody>
           </table>
         </div>
@@ -500,14 +476,9 @@
         window.releasesLoaded = true;
       }
       
-      // Загружаем данные для таба "Done" при первом открытии
-      if (tabName === 'done') {
-        loadDoneUsers();
-      }
-      
-      // Загружаем данные для таба "Без релиза" при первом открытии
-      if (tabName === 'no-release') {
-        loadNoReleaseUsers();
+      // Загружаем данные для таба "Фильтры" при первом открытии
+      if (tabName === 'filters') {
+        loadFilterUsers();
       }
       
       // Загружаем данные для таба "Improve" при первом открытии
@@ -948,8 +919,8 @@
       }
     });
     
-    // Функция загрузки списка сотрудников для таба Done
-    async function loadDoneUsers() {
+    // Функция загрузки списка сотрудников для таба Фильтры
+    async function loadFilterUsers() {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд
@@ -965,7 +936,7 @@
         const result = await response.json();
         
         if (result.success && result.data) {
-          const select = document.getElementById('done-user-select');
+          const select = document.getElementById('filter-user-select');
           if (select) {
             select.innerHTML = '<option value="">Выберите сотрудника</option>';
             
@@ -987,26 +958,79 @@
       }
     }
     
-    // Функция загрузки выполненных задач
-    async function loadDoneTasks() {
-      const userSelect = document.getElementById('done-user-select');
-      const periodSelect = document.getElementById('done-period-select');
-      const loading = document.getElementById('done-loading');
-      const errorDiv = document.getElementById('done-error');
-      const content = document.getElementById('done-content');
-      const tbody = document.getElementById('done-tbody');
+    // Обработчик изменения типа фильтра
+    function onFilterTypeChange() {
+      const filterType = document.getElementById('filter-type-select').value;
+      const userContainer = document.getElementById('filter-user-container');
+      const periodContainer = document.getElementById('filter-period-container');
+      const loading = document.getElementById('filter-loading');
+      const content = document.getElementById('filter-content');
+      const errorDiv = document.getElementById('filter-error');
       
-      const userId = userSelect.value;
-      const period = periodSelect.value;
+      // Скрываем все дополнительные селекты и контент
+      userContainer.style.display = 'none';
+      periodContainer.style.display = 'none';
+      content.style.display = 'none';
+      errorDiv.style.display = 'none';
       
-      if (!userId) {
+      if (!filterType) {
         loading.style.display = 'block';
-        errorDiv.style.display = 'none';
-        content.style.display = 'none';
-        loading.textContent = 'Выберите сотрудника и период для загрузки задач';
+        loading.textContent = 'Выберите фильтр для загрузки задач';
         return;
       }
       
+      // Показываем селект сотрудника для обоих типов фильтров
+      userContainer.style.display = 'block';
+      
+      // Показываем селект периода только для "Закрытые задачи"
+      if (filterType === 'done') {
+        periodContainer.style.display = 'block';
+      }
+      
+      // Загружаем список сотрудников, если еще не загружен
+      const userSelect = document.getElementById('filter-user-select');
+      if (userSelect.options.length <= 1) {
+        loadFilterUsers();
+      }
+      
+      loading.style.display = 'block';
+      loading.textContent = 'Выберите сотрудника' + (filterType === 'done' ? ' и период' : '') + ' для загрузки задач';
+    }
+    
+    // Функция загрузки задач по фильтру
+    async function loadFilterTasks() {
+      const filterType = document.getElementById('filter-type-select').value;
+      const userSelect = document.getElementById('filter-user-select');
+      const periodSelect = document.getElementById('filter-period-select');
+      const loading = document.getElementById('filter-loading');
+      const errorDiv = document.getElementById('filter-error');
+      const content = document.getElementById('filter-content');
+      const tbody = document.getElementById('filter-tbody');
+      const extraTh = document.getElementById('filter-th-extra');
+      
+      if (!filterType) {
+        loading.style.display = 'block';
+        loading.textContent = 'Выберите фильтр для загрузки задач';
+        errorDiv.style.display = 'none';
+        content.style.display = 'none';
+        return;
+      }
+      
+      const userId = userSelect ? userSelect.value : '';
+      
+      // Для "Закрытые задачи" требуется и сотрудник, и период
+      if (filterType === 'done') {
+        if (!userId) {
+          loading.style.display = 'block';
+          loading.textContent = 'Выберите сотрудника и период для загрузки задач';
+          errorDiv.style.display = 'none';
+          content.style.display = 'none';
+          return;
+        }
+      } else if (filterType === 'no-release') {
+        // Для "Задачи без релиза" сотрудник опционален
+      }
+      
       loading.style.display = 'block';
       loading.textContent = 'Загрузка задач...';
       errorDiv.style.display = 'none';
@@ -1015,120 +1039,17 @@
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
-        const response = await fetch(`/api/teams/${teamId}/done?user_id=${encodeURIComponent(userId)}&period=${period}`, {
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        const result = await response.json();
         
-        loading.style.display = 'none';
-        
-        if (!result.success) {
-          errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка:</b> ${result.error}</p></div>`;
-          errorDiv.style.display = 'block';
-          return;
-        }
-        
-        const tasks = result.data || [];
-        if (tasks.length === 0) {
-          errorDiv.innerHTML = '<p class="muted">Нет выполненных задач за выбранный период.</p>';
-          errorDiv.style.display = 'block';
-          return;
-        }
-        
-        // Заполняем таблицу
-        let html = '';
-        tasks.forEach(task => {
-          html += `
-            <tr style="border-bottom: 1px solid var(--border);">
-              <td style="padding: 10px;">
-                <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
-                  ${escapeHtml(task.key)}
-                </a>
-              </td>
-              <td style="padding: 10px;">
-                ${escapeHtml(task.summary || '')}
-              </td>
-              <td style="padding: 10px;">
-                ${task.resolved_date ? formatDate(task.resolved_date) : '-'}
-              </td>
-            </tr>
-          `;
-        });
-        
-        tbody.innerHTML = html;
-        content.style.display = 'block';
-      } catch (e) {
-        loading.style.display = 'none';
-        let errorMsg = e.message;
-        if (e.name === 'AbortError') {
-          errorMsg = 'Запрос превысил время ожидания. Попробуйте еще раз.';
-        }
-        errorDiv.innerHTML = `<div class="card error"><p><b>Ошибка загрузки:</b> ${escapeHtml(errorMsg)}</p></div>`;
-        errorDiv.style.display = 'block';
-      }
-    }
-    
-    // Функция загрузки списка сотрудников для таба "Без релиза"
-    async function loadNoReleaseUsers() {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд
-        const response = await fetch(`/api/teams/${teamId}/users`, {
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const result = await response.json();
-        
-        if (result.success && result.data) {
-          const select = document.getElementById('no-release-user-select');
-          if (select) {
-            select.innerHTML = '<option value="">Все сотрудники</option>';
-            
-            result.data.forEach(user => {
-              const option = document.createElement('option');
-              option.value = user.jira_account_id || '';
-              option.textContent = user.display_name || user.name || 'Без имени';
-              select.appendChild(option);
-            });
-          }
+        let url;
+        if (filterType === 'done') {
+          const period = periodSelect ? periodSelect.value : 'today';
+          url = `/api/teams/${teamId}/done?user_id=${encodeURIComponent(userId)}&period=${period}`;
         } else {
-          console.error('Ошибка загрузки сотрудников:', result.error || 'Неизвестная ошибка');
+          url = userId 
+            ? `/api/teams/${teamId}/no-release?user_id=${encodeURIComponent(userId)}`
+            : `/api/teams/${teamId}/no-release`;
         }
-      } catch (e) {
-        console.error('Ошибка загрузки сотрудников:', e);
-        if (e.name === 'AbortError') {
-          console.error('Запрос превысил время ожидания');
-        }
-      }
-    }
-    
-    // Функция загрузки задач без релиза
-    async function loadNoReleaseTasks() {
-      const userSelect = document.getElementById('no-release-user-select');
-      const loading = document.getElementById('no-release-loading');
-      const errorDiv = document.getElementById('no-release-error');
-      const content = document.getElementById('no-release-content');
-      const tbody = document.getElementById('no-release-tbody');
-      
-      const userId = userSelect.value;
-      
-      loading.style.display = 'block';
-      loading.textContent = 'Загрузка задач...';
-      errorDiv.style.display = 'none';
-      content.style.display = 'none';
-      
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
-        const url = userId 
-          ? `/api/teams/${teamId}/no-release?user_id=${encodeURIComponent(userId)}`
-          : `/api/teams/${teamId}/no-release`;
+        
         const response = await fetch(url, {
           signal: controller.signal
         });
@@ -1145,7 +1066,10 @@
         
         const tasks = result.data || [];
         if (tasks.length === 0) {
-          errorDiv.innerHTML = '<p class="muted">Нет задач без релиза.</p>';
+          const emptyMsg = filterType === 'done' 
+            ? 'Нет выполненных задач за выбранный период.'
+            : 'Нет задач без релиза.';
+          errorDiv.innerHTML = `<p class="muted">${emptyMsg}</p>`;
           errorDiv.style.display = 'block';
           return;
         }
@@ -1157,27 +1081,57 @@
           return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
         }
         
+        // Настраиваем заголовки таблицы в зависимости от типа фильтра
+        const dateTh = document.querySelector('#filter-content thead tr th:last-child');
+        if (filterType === 'done') {
+          extraTh.textContent = '';
+          extraTh.style.display = 'none';
+          if (dateTh) dateTh.textContent = 'Дата завершения';
+        } else {
+          extraTh.textContent = 'Исполнитель';
+          extraTh.style.display = '';
+          if (dateTh) dateTh.textContent = 'Создано';
+        }
+        
         // Заполняем таблицу
         let html = '';
         tasks.forEach(task => {
-          html += `
-            <tr style="border-bottom: 1px solid var(--border);">
-              <td style="padding: 10px;">
-                <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
-                  ${escapeHtml(task.key)}
-                </a>
-              </td>
-              <td style="padding: 10px;">
-                ${escapeHtml(task.summary || '')}
-              </td>
-              <td style="padding: 10px;">
-                ${escapeHtml(task.assignee || '-')}
-              </td>
-              <td style="padding: 10px;">
-                ${formatDate(task.created)}
-              </td>
-            </tr>
-          `;
+          if (filterType === 'done') {
+            html += `
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 10px;">
+                  <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                    ${escapeHtml(task.key)}
+                  </a>
+                </td>
+                <td style="padding: 10px;">
+                  ${escapeHtml(task.summary || '')}
+                </td>
+                <td style="padding: 10px;">
+                  ${task.resolved_date ? formatDate(task.resolved_date) : '-'}
+                </td>
+              </tr>
+            `;
+          } else {
+            html += `
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 10px;">
+                  <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                    ${escapeHtml(task.key)}
+                  </a>
+                </td>
+                <td style="padding: 10px;">
+                  ${escapeHtml(task.summary || '')}
+                </td>
+                <td style="padding: 10px;">
+                  ${escapeHtml(task.assignee || '-')}
+                </td>
+                <td style="padding: 10px;">
+                  ${formatDate(task.created)}
+                </td>
+              </tr>
+            `;
+          }
         });
         
         tbody.innerHTML = html;

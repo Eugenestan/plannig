@@ -1462,6 +1462,20 @@
       
       try {
         const response = await fetch(`/api/teams/${teamId}/gantt`);
+        
+        // Проверяем статус ответа перед парсингом JSON
+        if (!response.ok) {
+          const errorText = await response.text();
+          let errorMessage = `HTTP ${response.status}: ${errorText}`;
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || errorJson.detail || errorMessage;
+          } catch (e) {
+            // Если не JSON, используем текст как есть
+          }
+          throw new Error(errorMessage);
+        }
+        
         const result = await response.json();
         
         if (!result.success) {

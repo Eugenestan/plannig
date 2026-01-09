@@ -47,6 +47,9 @@
         <button id="tab-improve" class="tab-button" onclick="switchTab('improve')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
           Improve
         </button>
+        <button id="tab-gantt" class="tab-button" onclick="switchTab('gantt')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Гант
+        </button>
       </div>
     </div>
 
@@ -234,6 +237,42 @@
               <tbody id="improve-tbody">
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Таб: Гант -->
+    <div id="tab-content-gantt" class="tab-content" style="display: none; max-width: 100%; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 16px; width: 100%; box-sizing: border-box;">
+        <div class="toolbar" style="margin-bottom: 16px;">
+          <h2>Диаграмма Ганта</h2>
+          <div style="display: flex; gap: 10px;">
+            <button id="gantt-auto-distribute" class="button" onclick="autoDistributeTasks()" style="display: none;">
+              Распределить автоматически
+            </button>
+            <button id="gantt-remove-auto" class="button" onclick="removeAutoDistribution()" style="display: none;">
+              Убрать автоматическое распределение
+            </button>
+            <button id="gantt-save" class="button primary" onclick="saveGanttState()" style="display: none;">
+              Сохранить
+            </button>
+          </div>
+        </div>
+        
+        <div id="gantt-loading" style="text-align: center; padding: 40px; color: var(--muted);">
+          Загрузка данных...
+        </div>
+        <div id="gantt-error" style="display: none;"></div>
+        <div id="gantt-content" style="display: none; overflow-x: auto;">
+          <div id="gantt-container" style="position: relative; min-width: 100%;">
+            <!-- Календарная сетка будет здесь -->
+            <div id="gantt-calendar" style="position: sticky; top: 0; z-index: 10; background: var(--card); border-bottom: 2px solid var(--border);"></div>
+            <!-- Эпики и задачи будут здесь -->
+            <div id="gantt-tasks" style="position: relative;">
+            </div>
+            <!-- SVG для связей между задачами -->
+            <svg id="gantt-connections" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; overflow: visible;"></svg>
           </div>
         </div>
       </div>
@@ -485,6 +524,12 @@
       if (tabName === 'improve' && !window.improveLoaded) {
         loadImprove();
         window.improveLoaded = true;
+      }
+      
+      // Загружаем данные для таба "Гант" при первом открытии
+      if (tabName === 'gantt' && !window.ganttLoaded) {
+        loadGantt();
+        window.ganttLoaded = true;
       }
     }
     
@@ -1342,6 +1387,801 @@
     
     // Загружаем данные при загрузке страницы
     loadWorklog();
+    
+    // ========== ДИАГРАММА ГАНТА ==========
+    
+    let ganttData = null;
+    let ganttState = null;
+    let ganttConnections = [];
+    let ganttDraggedTask = null;
+    let ganttConnectionMode = null;
+    let ganttDayWidth = 20;
+    let ganttRowHeight = 40;
+    let ganttStartDate = null;
+    let ganttEndDate = null;
+    let ganttCalendarDays = [];
+    let ganttAutoMode = false;
+    let ganttExpandedEpics = {}; // Хранит состояние развернутости эпиков
+    
+    // Инициализация дат (5 месяцев с января текущего года)
+    function initGanttDates() {
+      const now = new Date();
+      ganttStartDate = new Date(now.getFullYear(), 0, 1); // 1 января
+      ganttEndDate = new Date(now.getFullYear(), 4, 31); // 31 мая (5 месяцев)
+      
+      // Генерируем массив дней
+      ganttCalendarDays = [];
+      const current = new Date(ganttStartDate);
+      while (current <= ganttEndDate) {
+        const dayOfWeek = current.getDay();
+        ganttCalendarDays.push({
+          date: new Date(current),
+          isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+        });
+        current.setDate(current.getDate() + 1);
+      }
+    }
+    
+    // Обработчик изменения размера окна и скролла для перерисовки связей
+    let ganttResizeTimeout = null;
+    window.addEventListener('resize', () => {
+      if (ganttResizeTimeout) {
+        clearTimeout(ganttResizeTimeout);
+      }
+      ganttResizeTimeout = setTimeout(() => {
+        if (window.ganttLoaded) {
+          renderGanttConnections();
+        }
+      }, 250);
+    });
+    
+    const ganttContent = document.getElementById('gantt-content');
+    if (ganttContent) {
+      let ganttScrollTimeout = null;
+      ganttContent.addEventListener('scroll', () => {
+        if (ganttScrollTimeout) {
+          clearTimeout(ganttScrollTimeout);
+        }
+        ganttScrollTimeout = setTimeout(() => {
+          if (window.ganttLoaded) {
+            renderGanttConnections();
+          }
+        }, 100);
+      });
+    }
+    
+    // Загрузка данных для Ганта
+    async function loadGantt() {
+      const loading = document.getElementById('gantt-loading');
+      const error = document.getElementById('gantt-error');
+      const content = document.getElementById('gantt-content');
+      
+      loading.style.display = 'block';
+      error.style.display = 'none';
+      content.style.display = 'none';
+      
+      try {
+        const response = await fetch(`/api/teams/${teamId}/gantt`);
+        const result = await response.json();
+        
+        if (!result.success) {
+          throw new Error(result.error || 'Ошибка загрузки данных');
+        }
+        
+        ganttData = result.data;
+        
+        // Загружаем сохраненное состояние
+        loadGanttState();
+        
+        // Инициализируем даты
+        initGanttDates();
+        
+        // Рендерим диаграмму
+        renderGantt();
+        
+        loading.style.display = 'none';
+        content.style.display = 'block';
+        
+        // Показываем кнопки управления
+        document.getElementById('gantt-auto-distribute').style.display = 'inline-block';
+        if (ganttAutoMode) {
+          document.getElementById('gantt-remove-auto').style.display = 'inline-block';
+        }
+      } catch (e) {
+        console.error('Gantt load error:', e);
+        loading.style.display = 'none';
+        error.style.display = 'block';
+        error.innerHTML = `Ошибка загрузки: ${e.message}`;
+      }
+    }
+    
+    // Рендеринг календарной сетки
+    function renderGanttCalendar() {
+      const calendarEl = document.getElementById('gantt-calendar');
+      if (!calendarEl) return;
+      
+      const months = [];
+      let currentMonth = null;
+      
+      ganttCalendarDays.forEach((day, index) => {
+        const month = day.date.getMonth();
+        const monthName = day.date.toLocaleString('ru-RU', { month: 'long' });
+        
+        if (!currentMonth || currentMonth.month !== month) {
+          if (currentMonth) {
+            months.push(currentMonth);
+          }
+          currentMonth = {
+            month,
+            name: monthName,
+            days: [],
+            startIndex: index,
+          };
+        }
+        
+        currentMonth.days.push(day);
+      });
+      
+      if (currentMonth) {
+        months.push(currentMonth);
+      }
+      
+      // Вычисляем общую ширину календаря
+      let totalCalendarWidth = 420; // Ширина столбца "Задача"
+      months.forEach(month => {
+        totalCalendarWidth += month.days.length * ganttDayWidth;
+      });
+      
+      let html = '<div style="display: flex; border-bottom: 1px solid var(--border); min-width: ' + totalCalendarWidth + 'px;">';
+      html += '<div style="width: 420px; min-width: 420px; flex-shrink: 0; padding: 8px; font-weight: 600; border-right: 1px solid var(--border);">Задача</div>';
+      
+      months.forEach(month => {
+        const monthWidth = month.days.length * ganttDayWidth;
+        html += `<div style="width: ${monthWidth}px; border-right: 1px solid var(--border);">`;
+        html += `<div style="padding: 8px; font-weight: 600; text-align: center; border-bottom: 1px solid var(--border);">${month.name}</div>`;
+        html += '<div style="display: flex;">';
+        
+        month.days.forEach(day => {
+          const bgColor = day.isWeekend ? 'var(--border)' : 'transparent';
+          const dayNum = day.date.getDate();
+          html += `<div style="width: ${ganttDayWidth}px; padding: 4px; text-align: center; font-size: 11px; background: ${bgColor}; border-right: 1px solid var(--border);">${dayNum}</div>`;
+        });
+        
+        html += '</div></div>';
+      });
+      
+      html += '</div>';
+      calendarEl.innerHTML = html;
+      
+      // Устанавливаем минимальную ширину для контейнера задач
+      const tasksEl = document.getElementById('gantt-tasks');
+      if (tasksEl) {
+        tasksEl.style.minWidth = totalCalendarWidth + 'px';
+      }
+      
+      // Сохраняем ширину для использования в других функциях
+      window.ganttTotalWidth = totalCalendarWidth;
+    }
+    
+    // Вычисление рабочих дней между датами
+    function getWorkingDays(startDate, endDate) {
+      let count = 0;
+      const current = new Date(startDate);
+      while (current <= endDate) {
+        const dayOfWeek = current.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+          count++;
+        }
+        current.setDate(current.getDate() + 1);
+      }
+      return count;
+    }
+    
+    // Получение даты начала для задачи (в рабочих днях от начала периода)
+    function getTaskStartDate(task) {
+      if (ganttState && ganttState.tasks && ganttState.tasks[task.id]) {
+        return ganttState.tasks[task.id].startDate;
+      }
+      return null;
+    }
+    
+    // Получение даты окончания для задачи
+    function getTaskEndDate(task) {
+      const startDate = getTaskStartDate(task);
+      if (startDate === null) return null;
+      
+      const workingDays = Math.ceil(task.originalEstimate / 8);
+      let current = new Date(ganttCalendarDays[startDate].date);
+      let daysAdded = 0;
+      
+      while (daysAdded < workingDays) {
+        const dayOfWeek = current.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+          daysAdded++;
+        }
+        if (daysAdded < workingDays) {
+          current.setDate(current.getDate() + 1);
+        }
+      }
+      
+      // Находим индекс этой даты в календаре
+      for (let i = 0; i < ganttCalendarDays.length; i++) {
+        if (ganttCalendarDays[i].date.toDateString() === current.toDateString()) {
+          return i;
+        }
+      }
+      
+      return startDate;
+    }
+    
+    // Рендеринг эпиков и задач
+    function renderGanttTasks() {
+      const tasksEl = document.getElementById('gantt-tasks');
+      if (!tasksEl || !ganttData) return;
+      
+      // Получаем общую ширину календаря
+      const totalWidth = window.ganttTotalWidth || (420 + ganttCalendarDays.length * ganttDayWidth);
+      
+      let html = '';
+      let rowIndex = 0;
+      
+      ganttData.forEach(epic => {
+        // Строка эпика
+        const epicStart = getEpicStartDate(epic);
+        const epicEnd = getEpicEndDate(epic);
+        const isExpanded = ganttExpandedEpics[epic.id] || false;
+        const expandIcon = isExpanded ? '▼' : '▶';
+        
+        html += `<div class="gantt-row" data-epic-id="${epic.id}" style="display: flex; height: ${ganttRowHeight}px; border-bottom: 1px solid var(--border); min-width: ${totalWidth}px;">`;
+        html += `<div class="gantt-label gantt-epic-header" data-epic-id="${epic.id}" style="width: 420px; padding: 8px; border-right: 1px solid var(--border); font-weight: 600; background: var(--card); cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; font-size: 12px;">`;
+        html += `<span class="gantt-expand-icon" style="font-size: 10px; color: var(--muted);">${expandIcon}</span>`;
+        html += `<span style="font-size: 12px;">${epic.key}: ${epic.summary}</span>`;
+        html += `</div>`;
+        html += `<div class="gantt-bar-container" style="position: relative; flex: 1; height: 100%;">`;
+        
+        if (epicStart !== null && epicEnd !== null) {
+          const left = epicStart * ganttDayWidth;
+          const width = (epicEnd - epicStart + 1) * ganttDayWidth;
+          html += `<div class="gantt-bar epic-bar" style="position: absolute; left: ${left}px; top: 8px; width: ${width}px; height: 24px; background: var(--primary); opacity: 0.3; border-radius: 4px;"></div>`;
+        }
+        
+        html += `</div></div>`;
+        rowIndex++;
+        
+        // Задачи эпика (скрыты по умолчанию)
+        epic.tasks.forEach(task => {
+          const taskDisplay = isExpanded ? 'flex' : 'none';
+          const taskStart = getTaskStartDate(task);
+          const taskEnd = getTaskEndDate(task);
+          
+          html += `<div class="gantt-row gantt-task-row" data-task-id="${task.id}" data-epic-id="${epic.id}" style="display: ${taskDisplay}; height: ${ganttRowHeight}px; border-bottom: 1px solid var(--border); min-width: ${totalWidth}px;">`;
+          html += `<div class="gantt-label" style="width: 420px; padding: 8px; border-right: 1px solid var(--border); background: var(--card); font-size: 12px;">`;
+          html += `${task.key}: ${task.summary}`;
+          html += `</div>`;
+          html += `<div class="gantt-bar-container" style="position: relative; flex: 1; height: 100%;">`;
+          
+          if (taskStart !== null && taskEnd !== null) {
+            const left = taskStart * ganttDayWidth;
+            const width = (taskEnd - taskStart + 1) * ganttDayWidth;
+            html += `<div class="gantt-bar task-bar" draggable="true" data-task-id="${task.id}" style="position: absolute; left: ${left}px; top: 8px; width: ${width}px; height: 24px; background: var(--primary); border-radius: 4px; cursor: move; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: 600;">`;
+            html += `${task.originalEstimate}ч`;
+            html += `<div class="connection-point left" style="position: absolute; left: -4px; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; background: var(--primary); border-radius: 50%; cursor: crosshair; z-index: 10;"></div>`;
+            html += `<div class="connection-point right" style="position: absolute; right: -4px; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; background: var(--primary); border-radius: 50%; cursor: crosshair; z-index: 10;"></div>`;
+            html += `<div class="connection-point top" style="position: absolute; top: -4px; left: 50%; transform: translateX(-50%); width: 8px; height: 8px; background: var(--primary); border-radius: 50%; cursor: crosshair; z-index: 10;"></div>`;
+            html += `<div class="connection-point bottom" style="position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 8px; height: 8px; background: var(--primary); border-radius: 50%; cursor: crosshair; z-index: 10;"></div>`;
+            html += `</div>`;
+          }
+          
+          html += `</div></div>`;
+          rowIndex++;
+        });
+      });
+      
+      tasksEl.innerHTML = html;
+      
+      // Добавляем обработчики для drag & drop
+      setupGanttDragDrop();
+      
+      // Добавляем обработчики для связей
+      setupGanttConnections();
+      
+      // Добавляем обработчики для сворачивания/разворачивания эпиков
+      setupGanttEpicToggle();
+      
+      // Рендерим связи после небольшой задержки, чтобы DOM обновился
+      setTimeout(() => {
+        renderGanttConnections();
+      }, 100);
+    }
+    
+    // Настройка обработчиков для сворачивания/разворачивания эпиков
+    function setupGanttEpicToggle() {
+      const epicHeaders = document.querySelectorAll('.gantt-epic-header');
+      epicHeaders.forEach(header => {
+        header.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const epicId = this.getAttribute('data-epic-id');
+          toggleEpic(epicId);
+        });
+      });
+    }
+    
+    // Переключение состояния эпика (свернуть/развернуть)
+    function toggleEpic(epicId) {
+      // Переключаем состояние
+      ganttExpandedEpics[epicId] = !ganttExpandedEpics[epicId];
+      
+      // Находим все задачи этого эпика
+      const taskRows = document.querySelectorAll(`.gantt-task-row[data-epic-id="${epicId}"]`);
+      const isExpanded = ganttExpandedEpics[epicId];
+      
+      // Показываем/скрываем задачи
+      taskRows.forEach(row => {
+        row.style.display = isExpanded ? 'flex' : 'none';
+      });
+      
+      // Обновляем иконку
+      const epicHeader = document.querySelector(`.gantt-epic-header[data-epic-id="${epicId}"]`);
+      if (epicHeader) {
+        const icon = epicHeader.querySelector('.gantt-expand-icon');
+        if (icon) {
+          icon.textContent = isExpanded ? '▼' : '▶';
+        }
+      }
+      
+      // Перерисовываем связи после изменения видимости
+      setTimeout(() => {
+        renderGanttConnections();
+      }, 50);
+    }
+    
+    // Получение даты начала эпика
+    function getEpicStartDate(epic) {
+      if (!epic.tasks || epic.tasks.length === 0) return null;
+      
+      let minStart = null;
+      epic.tasks.forEach(task => {
+        const start = getTaskStartDate(task);
+        if (start !== null && (minStart === null || start < minStart)) {
+          minStart = start;
+        }
+      });
+      
+      return minStart;
+    }
+    
+    // Получение даты окончания эпика
+    function getEpicEndDate(epic) {
+      if (!epic.tasks || epic.tasks.length === 0) return null;
+      
+      let maxEnd = null;
+      epic.tasks.forEach(task => {
+        const end = getTaskEndDate(task);
+        if (end !== null && (maxEnd === null || end > maxEnd)) {
+          maxEnd = end;
+        }
+      });
+      
+      return maxEnd;
+    }
+    
+    // Основная функция рендеринга
+    function renderGantt() {
+      renderGanttCalendar();
+      renderGanttTasks();
+    }
+    
+    // Настройка drag & drop
+    function setupGanttDragDrop() {
+      const taskBars = document.querySelectorAll('.task-bar');
+      taskBars.forEach(bar => {
+        bar.addEventListener('dragstart', handleGanttDragStart);
+        bar.addEventListener('drag', handleGanttDrag);
+        bar.addEventListener('dragend', handleGanttDragEnd);
+      });
+      
+      const containers = document.querySelectorAll('.gantt-bar-container');
+      containers.forEach(container => {
+        container.addEventListener('dragover', handleGanttDragOver);
+        container.addEventListener('drop', handleGanttDrop);
+      });
+    }
+    
+    function handleGanttDragStart(e) {
+      ganttDraggedTask = e.target;
+      e.target.style.opacity = '0.5';
+      e.dataTransfer.effectAllowed = 'move';
+    }
+    
+    function handleGanttDrag(e) {
+      // Обновляем позицию при перетаскивании
+    }
+    
+    function handleGanttDragEnd(e) {
+      if (ganttDraggedTask) {
+        ganttDraggedTask.style.opacity = '1';
+        ganttDraggedTask = null;
+      }
+    }
+    
+    function handleGanttDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    }
+    
+    function handleGanttDrop(e) {
+      e.preventDefault();
+      
+      if (!ganttDraggedTask) return;
+      
+      const container = e.currentTarget;
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const dayIndex = Math.floor(x / ganttDayWidth);
+      
+      if (dayIndex < 0 || dayIndex >= ganttCalendarDays.length) return;
+      
+      const taskId = ganttDraggedTask.getAttribute('data-task-id');
+      if (!ganttState.tasks) {
+        ganttState.tasks = {};
+      }
+      
+      if (!ganttState.tasks[taskId]) {
+        ganttState.tasks[taskId] = {};
+      }
+      
+      ganttState.tasks[taskId].startDate = dayIndex;
+      
+      // Перемещаем связанные задачи
+      moveConnectedTasks(taskId, dayIndex);
+      
+      // Перерисовываем
+      renderGantt();
+      
+      // Показываем кнопку сохранения
+      document.getElementById('gantt-save').style.display = 'inline-block';
+      
+      // Обновляем связи после перерисовки
+      setTimeout(() => {
+        renderGanttConnections();
+      }, 100);
+    }
+    
+    // Перемещение связанных задач
+    function moveConnectedTasks(taskId, newStartDate) {
+      if (!ganttState.connections) return;
+      
+      const oldStartDate = ganttState.tasks[taskId]?.startDate;
+      if (oldStartDate === null || oldStartDate === undefined) return;
+      
+      const offset = newStartDate - oldStartDate;
+      
+      ganttState.connections.forEach(conn => {
+        let otherTaskId = null;
+        if (conn.from === taskId) {
+          otherTaskId = conn.to;
+        } else if (conn.to === taskId) {
+          otherTaskId = conn.from;
+        }
+        
+        if (otherTaskId && ganttState.tasks[otherTaskId]) {
+          const currentStart = ganttState.tasks[otherTaskId].startDate;
+          if (currentStart !== null && currentStart !== undefined) {
+            ganttState.tasks[otherTaskId].startDate = currentStart + offset;
+          }
+        }
+      });
+    }
+    
+    // Настройка связей между задачами
+    function setupGanttConnections() {
+      const connectionPoints = document.querySelectorAll('.connection-point');
+      connectionPoints.forEach(point => {
+        point.addEventListener('click', handleConnectionPointClick);
+      });
+    }
+    
+    function handleConnectionPointClick(e) {
+      e.stopPropagation();
+      
+      if (!ganttConnectionMode) {
+        // Начинаем создание связи
+        const taskBar = e.target.closest('.task-bar');
+        const taskId = taskBar.getAttribute('data-task-id');
+        const pointType = e.target.classList.contains('left') ? 'left' :
+                         e.target.classList.contains('right') ? 'right' :
+                         e.target.classList.contains('top') ? 'top' : 'bottom';
+        
+        ganttConnectionMode = {
+          fromTask: taskId,
+          fromPoint: pointType,
+        };
+        
+        e.target.style.background = 'var(--success)';
+      } else {
+        // Завершаем создание связи
+        const taskBar = e.target.closest('.task-bar');
+        const toTaskId = taskBar.getAttribute('data-task-id');
+        const toPointType = e.target.classList.contains('left') ? 'left' :
+                           e.target.classList.contains('right') ? 'right' :
+                           e.target.classList.contains('top') ? 'top' : 'bottom';
+        
+        if (ganttConnectionMode.fromTask !== toTaskId) {
+          if (!ganttState.connections) {
+            ganttState.connections = [];
+          }
+          
+          ganttState.connections.push({
+            from: ganttConnectionMode.fromTask,
+            fromPoint: ganttConnectionMode.fromPoint,
+            to: toTaskId,
+            toPoint: toPointType,
+          });
+          
+          // Сбрасываем выделение
+          document.querySelectorAll('.connection-point').forEach(p => {
+            p.style.background = 'var(--primary)';
+          });
+          
+          renderGantt();
+          document.getElementById('gantt-save').style.display = 'inline-block';
+        }
+        
+        ganttConnectionMode = null;
+      }
+    }
+    
+    // Рендеринг связей
+    function renderGanttConnections() {
+      const svg = document.getElementById('gantt-connections');
+      if (!svg || !ganttState || !ganttState.connections) return;
+      
+      svg.innerHTML = '';
+      
+      // Добавляем маркер для стрелок один раз
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+      marker.setAttribute('id', 'arrowhead');
+      marker.setAttribute('markerWidth', '10');
+      marker.setAttribute('markerHeight', '10');
+      marker.setAttribute('refX', '9');
+      marker.setAttribute('refY', '3');
+      marker.setAttribute('orient', 'auto');
+      const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      polygon.setAttribute('points', '0 0, 10 3, 0 6');
+      polygon.setAttribute('fill', 'var(--primary)');
+      marker.appendChild(polygon);
+      defs.appendChild(marker);
+      svg.appendChild(defs);
+      
+      ganttState.connections.forEach(conn => {
+        const fromBar = document.querySelector(`.task-bar[data-task-id="${conn.from}"]`);
+        const toBar = document.querySelector(`.task-bar[data-task-id="${conn.to}"]`);
+        
+        if (!fromBar || !toBar) return;
+        
+        const container = document.getElementById('gantt-container');
+        if (!container) return;
+        
+        const tasksContainer = document.getElementById('gantt-tasks');
+        if (!tasksContainer) return;
+        
+        const fromRect = fromBar.getBoundingClientRect();
+        const toRect = toBar.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const tasksRect = tasksContainer.getBoundingClientRect();
+        
+        let x1, y1, x2, y2;
+        
+        // Вычисляем координаты точек относительно SVG (который находится в контейнере)
+        // SVG находится на том же уровне, что и tasks, поэтому используем containerRect
+        if (conn.fromPoint === 'left') {
+          x1 = fromRect.left - containerRect.left;
+          y1 = fromRect.top + fromRect.height / 2 - containerRect.top;
+        } else if (conn.fromPoint === 'right') {
+          x1 = fromRect.right - containerRect.left;
+          y1 = fromRect.top + fromRect.height / 2 - containerRect.top;
+        } else if (conn.fromPoint === 'top') {
+          x1 = fromRect.left + fromRect.width / 2 - containerRect.left;
+          y1 = fromRect.top - containerRect.top;
+        } else {
+          x1 = fromRect.left + fromRect.width / 2 - containerRect.left;
+          y1 = fromRect.bottom - containerRect.top;
+        }
+        
+        if (conn.toPoint === 'left') {
+          x2 = toRect.left - containerRect.left;
+          y2 = toRect.top + toRect.height / 2 - containerRect.top;
+        } else if (conn.toPoint === 'right') {
+          x2 = toRect.right - containerRect.left;
+          y2 = toRect.top + toRect.height / 2 - containerRect.top;
+        } else if (conn.toPoint === 'top') {
+          x2 = toRect.left + toRect.width / 2 - containerRect.left;
+          y2 = toRect.top - containerRect.top;
+        } else {
+          x2 = toRect.left + toRect.width / 2 - containerRect.left;
+          y2 = toRect.bottom - containerRect.top;
+        }
+        
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('stroke', 'var(--primary)');
+        line.setAttribute('stroke-width', '2');
+        line.setAttribute('marker-end', 'url(#arrowhead)');
+        
+        svg.appendChild(line);
+      });
+    }
+    
+    // Автоматическое распределение задач
+    function autoDistributeTasks() {
+      if (!ganttData) return;
+      
+      // Сортируем эпики по приоритету
+      const priorityOrder = { 'Highest': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Lowest': 4 };
+      const sortedEpics = [...ganttData].sort((a, b) => {
+        const aPriority = priorityOrder[a.priority] ?? 99;
+        const bPriority = priorityOrder[b.priority] ?? 99;
+        return aPriority - bPriority;
+      });
+      
+      // Группируем задачи по исполнителям
+      // Если у задачи несколько исполнителей, она добавляется в группы всех исполнителей
+      const tasksByAssignee = {};
+      sortedEpics.forEach(epic => {
+        epic.tasks.forEach(task => {
+          if (task.assignees && task.assignees.length > 0) {
+            task.assignees.forEach(assignee => {
+              if (!tasksByAssignee[assignee]) {
+                tasksByAssignee[assignee] = [];
+              }
+              tasksByAssignee[assignee].push({
+                ...task,
+                epicPriority: epic.priority,
+              });
+            });
+          } else {
+            // Если нет исполнителей, добавляем в общую группу
+            const noAssigneeKey = '__no_assignee__';
+            if (!tasksByAssignee[noAssigneeKey]) {
+              tasksByAssignee[noAssigneeKey] = [];
+            }
+            tasksByAssignee[noAssigneeKey].push({
+              ...task,
+              epicPriority: epic.priority,
+            });
+          }
+        });
+      });
+      
+      // Распределяем задачи по исполнителям
+      if (!ganttState.tasks) {
+        ganttState.tasks = {};
+      }
+      
+      const assigneeTimelines = {};
+      
+      Object.keys(tasksByAssignee).forEach(assignee => {
+        assigneeTimelines[assignee] = [];
+        const tasks = tasksByAssignee[assignee];
+        
+        // Сортируем задачи по приоритету эпика
+        tasks.sort((a, b) => {
+          const aPriority = priorityOrder[a.epicPriority] ?? 99;
+          const bPriority = priorityOrder[b.epicPriority] ?? 99;
+          return aPriority - bPriority;
+        });
+        
+        let currentDate = 0;
+        tasks.forEach(task => {
+          const workingDays = Math.ceil(task.originalEstimate / 8);
+          
+          // Пропускаем выходные
+          while (currentDate < ganttCalendarDays.length && ganttCalendarDays[currentDate].isWeekend) {
+            currentDate++;
+          }
+          
+          if (currentDate < ganttCalendarDays.length) {
+            ganttState.tasks[task.id] = {
+              startDate: currentDate,
+            };
+            
+            // Вычисляем дату окончания
+            let daysAdded = 0;
+            let endDate = currentDate;
+            while (daysAdded < workingDays && endDate < ganttCalendarDays.length) {
+              if (!ganttCalendarDays[endDate].isWeekend) {
+                daysAdded++;
+              }
+              if (daysAdded < workingDays) {
+                endDate++;
+              }
+            }
+            
+            assigneeTimelines[assignee].push({
+              taskId: task.id,
+              start: currentDate,
+              end: endDate,
+            });
+            
+            currentDate = endDate + 1;
+          }
+        });
+      });
+      
+      ganttAutoMode = true;
+      document.getElementById('gantt-remove-auto').style.display = 'inline-block';
+      document.getElementById('gantt-save').style.display = 'inline-block';
+      
+      renderGantt();
+      
+      // Обновляем связи после перерисовки
+      setTimeout(() => {
+        renderGanttConnections();
+      }, 100);
+    }
+    
+    // Убрать автоматическое распределение
+    function removeAutoDistribution() {
+      if (!ganttState.tasks) return;
+      
+      // Удаляем сохраненные позиции задач
+      ganttState.tasks = {};
+      ganttAutoMode = false;
+      
+      document.getElementById('gantt-remove-auto').style.display = 'none';
+      document.getElementById('gantt-save').style.display = 'inline-block';
+      
+      renderGantt();
+    }
+    
+    // Сохранение состояния
+    async function saveGanttState() {
+      try {
+        const response = await fetch(`/api/teams/${teamId}/gantt/state`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            state: ganttState,
+            autoMode: ganttAutoMode,
+          }),
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+          document.getElementById('gantt-save').style.display = 'none';
+        } else {
+          console.error('Ошибка сохранения:', result.error);
+        }
+      } catch (e) {
+        console.error('Ошибка при сохранении:', e);
+      }
+    }
+    
+    // Загрузка состояния
+    async function loadGanttState() {
+      try {
+        const response = await fetch(`/api/teams/${teamId}/gantt/state`);
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          ganttState = result.data.state || { tasks: {}, connections: [] };
+          ganttAutoMode = result.data.autoMode || false;
+        } else {
+          ganttState = { tasks: {}, connections: [] };
+          ganttAutoMode = false;
+        }
+      } catch (e) {
+        console.error('Ошибка загрузки состояния:', e);
+        ganttState = { tasks: {}, connections: [] };
+        ganttAutoMode = false;
+      }
+    }
   </script>
 </body>
 </html>

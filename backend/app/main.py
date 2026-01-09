@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import SQLAlchemyError
 
 from .db import Base, engine, get_db
-from .models import ApiCredential, CredentialTeam, CredentialUser, ImproveTaskOrder, Team, TeamMember, User
+from .models import ApiCredential, CredentialTeam, CredentialUser, GanttState, ImproveTaskOrder, Team, TeamMember, User
 from .sync_jira import credential_has_any_team, sync_from_jira_for_credential
 from .worklog_fetcher import get_team_worklog
 from .config import settings
@@ -1081,6 +1081,279 @@ def api_epic_issues(request: Request, epic_key: str, db: Session = Depends(get_d
         import traceback
         error_msg = str(e)
         print(f"Epic issues error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+@app.get("/api/teams/{team_id}/gantt")
+def api_team_gantt(request: Request, team_id: int, db: Session = Depends(get_db)):
+    """API endpoint для получения данных эпиков и задач для диаграммы Ганта."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        jira, api_prefix, cred = get_jira_client_for_request(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
+        
+        # JQL запрос для эпиков
+        jql = 'project = TNL AND type = Epic AND status NOT IN (Отменено, Done) AND assignee = currentUser() ORDER BY status ASC, updated ASC, parent DESC, created DESC'
+        
+        # Получаем эпики
+        all_epics = []
+        epic_keys = []
+        epic_map = {}
+        next_token = ""
+        page_size = 200
+        
+        while True:
+            data = jira.search_jql_page(
+                jql=jql,
+                fields=["key", "summary", "priority"],
+                max_results=page_size,
+                next_page_token=next_token
+            )
+            issues = data.get("issues", []) or data.get("values", [])
+            if not issues:
+                break
+            
+            for issue in issues:
+                fields = issue.get("fields", {})
+                priority = fields.get("priority", {})
+                priority_name = priority.get("name", "") if isinstance(priority, dict) else str(priority)
+                
+                epic_key = issue.get("key", "")
+                epic = {
+                    "id": issue.get("id", ""),
+                    "key": epic_key,
+                    "summary": fields.get("summary", ""),
+                    "priority": priority_name,
+                    "tasks": [],
+                }
+                
+                epic_keys.append(epic_key)
+                epic_map[epic_key] = epic
+                all_epics.append(epic)
+            
+            next_token = (data.get("nextPageToken") or "").strip()
+            if not next_token:
+                break
+        
+        # Теперь получаем все задачи всех эпиков одним запросом
+        if epic_keys:
+            # Строим JQL для всех задач эпиков
+            # Используем OR для всех эпиков, но ограничим количество для избежания слишком длинных запросов
+            # Если эпиков слишком много, разобьем на батчи
+            batch_size = 50  # Jira может иметь ограничения на длину JQL
+            all_tasks = []
+            
+            for i in range(0, len(epic_keys), batch_size):
+                batch_keys = epic_keys[i:i + batch_size]
+                # Строим условие для батча
+                epic_conditions = []
+                for key in batch_keys:
+                    epic_conditions.append(f'parent = {key}')
+                    epic_conditions.append(f'"Epic Link" = {key}')
+                
+                # Объединяем условия через OR
+                conditions_str = ' OR '.join(epic_conditions)
+                tasks_jql = f'project = TNL AND ({conditions_str})'
+                
+                try:
+                    tasks_next_token = ""
+                    while True:
+                        # Запрашиваем все поля, чтобы найти Epic Link
+                        # Используем * для получения всех полей, но это может быть медленно
+                        # Альтернатива - запросить конкретные поля, но Epic Link может иметь разный ID
+                        tasks_data = jira.search_jql_page(
+                            jql=tasks_jql,
+                            fields=["key", "summary", "components", "assignee", "timeoriginalestimate", "parent"],
+                            max_results=200,
+                            next_page_token=tasks_next_token
+                        )
+                        batch_tasks = tasks_data.get("issues", []) or tasks_data.get("values", [])
+                        if not batch_tasks:
+                            break
+                        all_tasks.extend(batch_tasks)
+                        tasks_next_token = (tasks_data.get("nextPageToken") or "").strip()
+                        if not tasks_next_token:
+                            break
+                except Exception as e:
+                    print(f"Error fetching tasks batch {i}-{i+len(batch_keys)}: {e}")
+            
+            # Распределяем задачи по эпикам
+            for task in all_tasks:
+                task_fields = task.get("fields", {})
+                
+                # Определяем, к какому эпику относится задача
+                epic_key = None
+                parent = task_fields.get("parent")
+                if parent:
+                    if isinstance(parent, dict):
+                        parent_key = parent.get("key", "")
+                        if parent_key in epic_map:
+                            epic_key = parent_key
+                
+                # Если не нашли через parent, задача могла попасть в результаты через "Epic Link" в JQL
+                # Но в ответе API может не быть самого поля Epic Link
+                # В этом случае проверяем, есть ли ключ задачи в списке эпиков (маловероятно, но на всякий случай)
+                if not epic_key:
+                    task_key = task.get("key", "")
+                    # Если задача сама является эпиком из нашего списка, пропускаем
+                    if task_key not in epic_map:
+                        # Задача попала в результаты, но мы не можем определить её эпик
+                        # Это может быть из-за того, что Epic Link не возвращается в fields
+                        # Пропускаем эту задачу
+                        continue
+                
+                if epic_key and epic_key in epic_map:
+                    # Получаем компоненты
+                    components = task_fields.get("components", [])
+                    component_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in components]
+                    
+                    # Получаем исполнителей
+                    assignee = task_fields.get("assignee")
+                    assignee_account_ids = []
+                    
+                    if assignee:
+                        if isinstance(assignee, list):
+                            for a in assignee:
+                                if isinstance(a, dict):
+                                    account_id = a.get("accountId", "")
+                                    if account_id:
+                                        assignee_account_ids.append(account_id)
+                        elif isinstance(assignee, dict):
+                            account_id = assignee.get("accountId", "")
+                            if account_id:
+                                assignee_account_ids.append(account_id)
+                    
+                    # Получаем исходную оценку в часах
+                    time_original_estimate = task_fields.get("timeoriginalestimate", 0) or 0
+                    original_estimate_hours = time_original_estimate / 3600.0 if time_original_estimate else 0
+                    
+                    epic_map[epic_key]["tasks"].append({
+                        "id": task.get("id", ""),
+                        "key": task.get("key", ""),
+                        "summary": task_fields.get("summary", ""),
+                        "components": component_names,
+                        "assignees": assignee_account_ids,
+                        "originalEstimate": round(original_estimate_hours, 2),
+                    })
+        
+        return JSONResponse({
+            "success": True,
+            "data": all_epics,
+        })
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"Gantt error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+@app.get("/api/teams/{team_id}/gantt/state")
+def api_team_gantt_state(request: Request, team_id: int, db: Session = Depends(get_db)):
+    """API endpoint для загрузки сохраненного состояния диаграммы Ганта."""
+    from fastapi.responses import JSONResponse
+    import json
+    
+    try:
+        cred = get_credential_from_session(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
+        
+        gantt_state = db.scalar(
+            select(GanttState).where(
+                GanttState.credential_id == cred.id,
+                GanttState.team_id == team_id
+            )
+        )
+        
+        if gantt_state:
+            state_data = json.loads(gantt_state.state_data)
+            return JSONResponse({
+                "success": True,
+                "data": {
+                    "state": state_data,
+                    "autoMode": gantt_state.auto_mode,
+                },
+            })
+        else:
+            return JSONResponse({
+                "success": True,
+                "data": {
+                    "state": {"tasks": {}, "connections": []},
+                    "autoMode": False,
+                },
+            })
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"Gantt state load error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+@app.post("/api/teams/{team_id}/gantt/state")
+def api_team_gantt_state_save(request: Request, team_id: int, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для сохранения состояния диаграммы Ганта."""
+    from fastapi.responses import JSONResponse
+    import json
+    
+    try:
+        cred = get_credential_from_session(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
+        
+        state_data = body.get("state", {})
+        auto_mode = body.get("autoMode", False)
+        
+        gantt_state = db.scalar(
+            select(GanttState).where(
+                GanttState.credential_id == cred.id,
+                GanttState.team_id == team_id
+            )
+        )
+        
+        state_json = json.dumps(state_data)
+        
+        if gantt_state:
+            gantt_state.state_data = state_json
+            gantt_state.auto_mode = auto_mode
+        else:
+            gantt_state = GanttState(
+                credential_id=cred.id,
+                team_id=team_id,
+                state_data=state_json,
+                auto_mode=auto_mode,
+            )
+            db.add(gantt_state)
+        
+        db.commit()
+        
+        return JSONResponse({
+            "success": True,
+        })
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"Gantt state save error: {traceback.format_exc()}")
+        db.rollback()
         return JSONResponse(
             {"success": False, "error": error_msg},
             status_code=500,

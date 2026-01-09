@@ -34,7 +34,7 @@ class Jira:
         self.session = requests.Session()
         self.session.headers.update(headers)
         self.timeout_s = timeout_s
-
+    
     def request(self, method: str, path: str, *, params: Optional[dict] = None, json_body: Optional[dict] = None) -> requests.Response:
         url = self.base_url + path
         r = self.session.request(method, url, params=params, json=json_body, timeout=self.timeout_s, allow_redirects=True)
@@ -75,6 +75,7 @@ class Jira:
         if r.status_code != 200:
             raise RuntimeError(f"Get worklog failed: HTTP {r.status_code}: {r.text}")
         return r.json()
+
 
 
 def build_headers_from_env() -> tuple[str, Dict[str, str]]:

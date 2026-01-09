@@ -133,3 +133,25 @@ class ImproveTaskOrder(Base):
     
     __table_args__ = (UniqueConstraint("credential_id", "task_key", name="uq_improve_task_order"),)
 
+
+class GanttState(Base):
+    """
+    Хранение состояния диаграммы Ганта (позиции задач, связи, режим).
+    Состояние привязано к credential и team.
+    """
+    
+    __tablename__ = "gantt_state"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    state_data: Mapped[str] = mapped_column(String(10000), nullable=False)  # JSON строка с состоянием
+    auto_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    credential: Mapped[ApiCredential] = relationship()
+    team: Mapped[Team] = relationship()
+    
+    __table_args__ = (UniqueConstraint("credential_id", "team_id", name="uq_gantt_state"),)

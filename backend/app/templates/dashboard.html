@@ -1484,8 +1484,19 @@
         
         ganttData = result.data;
         
-        // Загружаем сохраненное состояние
-        loadGanttState();
+        // Загружаем сохраненное состояние (await, чтобы дождаться загрузки)
+        await loadGanttState();
+        
+        // Если есть сохраненные задачи, автоматически разворачиваем эпики с задачами
+        if (ganttState && ganttState.tasks && Object.keys(ganttState.tasks).length > 0) {
+          ganttData.forEach(epic => {
+            // Проверяем, есть ли у этого эпика задачи с сохраненными позициями
+            const hasSavedTasks = epic.tasks.some(task => ganttState.tasks[task.id]);
+            if (hasSavedTasks) {
+              ganttExpandedEpics[epic.id] = true;
+            }
+          });
+        }
         
         // Инициализируем даты
         initGanttDates();
@@ -1636,7 +1647,7 @@
       // Получаем общую ширину календаря
       const totalWidth = window.ganttTotalWidth || (420 + ganttCalendarDays.length * ganttDayWidth);
       
-      let html = '';
+      let html = '<div style="padding-top: 10px;">';
       let rowIndex = 0;
       
       ganttData.forEach(epic => {
@@ -1646,7 +1657,7 @@
         const isExpanded = ganttExpandedEpics[epic.id] || false;
         const expandIcon = isExpanded ? '▼' : '▶';
         
-        html += `<div class="gantt-row" data-epic-id="${epic.id}" style="display: flex; height: ${ganttRowHeight}px; border-bottom: 1px solid var(--border); min-width: ${totalWidth}px;">`;
+        html += `<div class="gantt-row" data-epic-id="${epic.id}" style="display: flex; height: ${ganttRowHeight}px; border-bottom: 1px solid var(--border); min-width: ${totalWidth}px; margin-bottom: 10px;">`;
         html += `<div class="gantt-label gantt-epic-header" data-epic-id="${epic.id}" style="width: 420px; padding: 8px; border-right: 1px solid var(--border); font-weight: 600; background: var(--card); cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; font-size: 12px;">`;
         html += `<span class="gantt-expand-icon" style="font-size: 10px; color: var(--muted);">${expandIcon}</span>`;
         html += `<span style="font-size: 12px;">${epic.key}: ${epic.summary}</span>`;
@@ -1691,6 +1702,7 @@
         });
       });
       
+      html += '</div>';
       tasksEl.innerHTML = html;
       
       // Добавляем обработчики для drag & drop
@@ -2030,101 +2042,270 @@
       });
     }
     
+    // Функция для определения приоритета задачи внутри эпика
+    function getTaskPriorityInEpic(task) {
+      const taskType = (task.type || '').toLowerCase();
+      const components = task.components || [];
+      const hasBE = components.includes('BE');
+      const hasFE = components.includes('FE');
+      const hasQA = components.includes('QA');
+      
+      // Определяем порядок приоритета
+      // 1. Task + BE
+      // 2. Task + FE
+      // 3. Task + QA
+      // 4. Defect/Bug + BE
+      // 5. Defect/Bug + FE
+      
+      if (taskType === 'task' || taskType === 'задача') {
+        if (hasBE) return 1;
+        if (hasFE) return 2;
+        if (hasQA) return 3;
+        return 99; // Task без компонента
+      } else if (taskType === 'bug' || taskType === 'defect' || taskType === 'дефект') {
+        if (hasBE) return 4;
+        if (hasFE) return 5;
+        return 99; // Defect без компонента или с QA (не учитывается)
+      }
+      
+      return 99; // Неизвестный тип
+    }
+    
+    // Проверка пересечения диапазонов
+    function rangesOverlap(start1, end1, range2) {
+      return start1 <= range2.end && end1 >= range2.start;
+    }
+    
+    // Проверка доступности всех исполнителей
+    function areAllAssigneesFree(assignees, startDate, durationDays, assigneeCalendars) {
+      if (!assignees || assignees.length === 0) {
+        return true; // Если нет исполнителей, считаем свободным
+      }
+      
+      // Вычисляем дату окончания
+      let daysAdded = 0;
+      let endDate = startDate;
+      while (daysAdded < durationDays && endDate < ganttCalendarDays.length) {
+        if (!ganttCalendarDays[endDate].isWeekend) {
+          daysAdded++;
+        }
+        if (daysAdded < durationDays) {
+          endDate++;
+        }
+      }
+      
+      // Проверяем каждого исполнителя
+      for (const assignee of assignees) {
+        const busyRanges = assigneeCalendars[assignee] || [];
+        for (const range of busyRanges) {
+          if (rangesOverlap(startDate, endDate, range)) {
+            return false; // Найдено пересечение
+          }
+        }
+      }
+      
+      return true; // Все исполнители свободны
+    }
+    
+    // Поиск первой доступной даты старта с учетом глобальной занятости исполнителей
+    function findEarliestAvailableDate(task, planningStartDate, planningEndDate, assigneeCalendars) {
+      const workingDays = Math.ceil(task.originalEstimate / 8);
+      
+      // Если у задачи нет исполнителей, начинаем с planningStartDate
+      if (!task.assignees || task.assignees.length === 0) {
+        let startDate = planningStartDate;
+        while (startDate <= planningEndDate && ganttCalendarDays[startDate].isWeekend) {
+          startDate++;
+        }
+        return startDate <= planningEndDate ? startDate : planningEndDate;
+      }
+      
+      // Находим максимальную дату окончания среди всех исполнителей (глобальная занятость)
+      let maxEndDate = -1;
+      for (const assignee of task.assignees) {
+        const busyRanges = assigneeCalendars[assignee] || [];
+        if (busyRanges.length > 0) {
+          // Находим последнюю занятую дату для этого исполнителя
+          const lastRange = busyRanges[busyRanges.length - 1];
+          maxEndDate = Math.max(maxEndDate, lastRange.end);
+        }
+      }
+      
+      // Начинаем поиск с даты после последней занятой даты или с planningStartDate
+      let candidateDate = Math.max(planningStartDate, maxEndDate + 1);
+      
+      while (candidateDate <= planningEndDate) {
+        // Пропускаем выходные
+        if (ganttCalendarDays[candidateDate].isWeekend) {
+          candidateDate++;
+          continue;
+        }
+        
+        // Проверяем доступность всех исполнителей (глобальная проверка)
+        if (areAllAssigneesFree(task.assignees, candidateDate, workingDays, assigneeCalendars)) {
+          return candidateDate;
+        }
+        
+        candidateDate++;
+      }
+      
+      // Если не нашли свободную дату, возвращаем конец периода
+      return planningEndDate;
+    }
+    
+    // Формирование строгой очереди тикетов эпика
+    function buildOrderedTicketQueue(tickets) {
+      const ORDER = [
+        { type: 'task', component: 'BE' },
+        { type: 'task', component: 'FE' },
+        { type: 'task', component: 'QA' },
+        { type: 'defect', component: 'BE' },
+        { type: 'defect', component: 'FE' },
+      ];
+      
+      const queue = [];
+      
+      for (const orderItem of ORDER) {
+        const filtered = tickets.filter(ticket => {
+          const taskType = (ticket.type || '').trim();
+          const components = ticket.components || [];
+          
+          // Проверяем тип: "Задача" или "Дефект" (на русском)
+          const isTask = taskType === 'Задача' || taskType.toLowerCase() === 'task' || taskType.toLowerCase() === 'задача';
+          const isDefect = taskType === 'Дефект' || taskType.toLowerCase() === 'bug' || taskType.toLowerCase() === 'defect' || taskType.toLowerCase() === 'дефект';
+          
+          const hasComponent = components.includes(orderItem.component);
+          
+          if (orderItem.type === 'task') {
+            return isTask && hasComponent;
+          } else if (orderItem.type === 'defect') {
+            return isDefect && hasComponent;
+          }
+          return false;
+        });
+        
+        // Добавляем в очередь в порядке получения (сохраняем исходный порядок)
+        queue.push(...filtered);
+      }
+      
+      return queue;
+    }
+    
+    // Вычисление суммарной оценки всех задач эпика
+    function calculateEpicTotalEstimate(epic) {
+      let total = 0;
+      epic.tasks.forEach(task => {
+        total += task.originalEstimate || 0;
+      });
+      return total;
+    }
+    
     // Автоматическое распределение задач
     function autoDistributeTasks() {
       if (!ganttData) return;
       
-      // Сортируем эпики по приоритету
+      // Сортируем эпики по приоритету (DESC - выше приоритет раньше)
+      // Если приоритет одинаковый, то по суммарной оценке (меньшая оценка раньше)
       const priorityOrder = { 'Highest': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Lowest': 4 };
       const sortedEpics = [...ganttData].sort((a, b) => {
         const aPriority = priorityOrder[a.priority] ?? 99;
         const bPriority = priorityOrder[b.priority] ?? 99;
-        return aPriority - bPriority;
+        
+        if (aPriority !== bPriority) {
+          return aPriority - bPriority;
+        }
+        
+        // Если приоритет одинаковый, сортируем по суммарной оценке (меньшая оценка раньше)
+        const aTotalEstimate = calculateEpicTotalEstimate(a);
+        const bTotalEstimate = calculateEpicTotalEstimate(b);
+        return aTotalEstimate - bTotalEstimate;
       });
       
-      // Группируем задачи по исполнителям
-      // Если у задачи несколько исполнителей, она добавляется в группы всех исполнителей
-      const tasksByAssignee = {};
-      sortedEpics.forEach(epic => {
-        epic.tasks.forEach(task => {
-          if (task.assignees && task.assignees.length > 0) {
-            task.assignees.forEach(assignee => {
-              if (!tasksByAssignee[assignee]) {
-                tasksByAssignee[assignee] = [];
-              }
-              tasksByAssignee[assignee].push({
-                ...task,
-                epicPriority: epic.priority,
-              });
-            });
-          } else {
-            // Если нет исполнителей, добавляем в общую группу
-            const noAssigneeKey = '__no_assignee__';
-            if (!tasksByAssignee[noAssigneeKey]) {
-              tasksByAssignee[noAssigneeKey] = [];
-            }
-            tasksByAssignee[noAssigneeKey].push({
-              ...task,
-              epicPriority: epic.priority,
-            });
-          }
-        });
-      });
-      
-      // Распределяем задачи по исполнителям
+      // Инициализируем состояние задач
       if (!ganttState.tasks) {
         ganttState.tasks = {};
       }
       
-      const assigneeTimelines = {};
+      // Календари занятости исполнителей: { assigneeId: [{ start: dateIndex, end: dateIndex }] }
+      const assigneeCalendars = {};
       
-      Object.keys(tasksByAssignee).forEach(assignee => {
-        assigneeTimelines[assignee] = [];
-        const tasks = tasksByAssignee[assignee];
+      const planningStartDate = 0;
+      const planningEndDate = ganttCalendarDays.length - 1;
+      
+      // Для каждого эпика (по приоритету) распределяем задачи строго последовательно
+      for (const epic of sortedEpics) {
+        // Формируем строгую очередь тикетов эпика
+        const orderedTickets = buildOrderedTicketQueue(epic.tasks);
         
-        // Сортируем задачи по приоритету эпика
-        tasks.sort((a, b) => {
-          const aPriority = priorityOrder[a.epicPriority] ?? 99;
-          const bPriority = priorityOrder[b.epicPriority] ?? 99;
-          return aPriority - bPriority;
-        });
+        // Отслеживаем дату окончания последней задачи этого эпика
+        let epicLastEndDate = -1;
         
-        let currentDate = 0;
-        tasks.forEach(task => {
-          const workingDays = Math.ceil(task.originalEstimate / 8);
+        // Последовательно планируем тикеты эпика
+        for (const ticket of orderedTickets) {
+          const workingDays = Math.ceil(ticket.originalEstimate / 8);
           
-          // Пропускаем выходные
-          while (currentDate < ganttCalendarDays.length && ganttCalendarDays[currentDate].isWeekend) {
-            currentDate++;
-          }
+          // Определяем минимальную дату начала: после окончания предыдущей задачи эпика
+          // ИЛИ после окончания занятости исполнителей (берем максимум)
+          let minStartDate = epicLastEndDate + 1;
           
-          if (currentDate < ganttCalendarDays.length) {
-            ganttState.tasks[task.id] = {
-              startDate: currentDate,
-            };
-            
-            // Вычисляем дату окончания
-            let daysAdded = 0;
-            let endDate = currentDate;
-            while (daysAdded < workingDays && endDate < ganttCalendarDays.length) {
-              if (!ganttCalendarDays[endDate].isWeekend) {
-                daysAdded++;
-              }
-              if (daysAdded < workingDays) {
-                endDate++;
+          // Находим максимальную дату окончания среди всех исполнителей задачи (глобальная занятость)
+          if (ticket.assignees && ticket.assignees.length > 0) {
+            let maxAssigneeEndDate = -1;
+            for (const assignee of ticket.assignees) {
+              const busyRanges = assigneeCalendars[assignee] || [];
+              if (busyRanges.length > 0) {
+                const lastRange = busyRanges[busyRanges.length - 1];
+                maxAssigneeEndDate = Math.max(maxAssigneeEndDate, lastRange.end);
               }
             }
-            
-            assigneeTimelines[assignee].push({
-              taskId: task.id,
-              start: currentDate,
-              end: endDate,
-            });
-            
-            currentDate = endDate + 1;
+            // Берем максимум: после предыдущей задачи эпика ИЛИ после занятости исполнителей
+            minStartDate = Math.max(minStartDate, maxAssigneeEndDate + 1);
           }
-        });
-      });
+          
+          // Находим первую доступную дату старта, начиная с minStartDate
+          const startDate = findEarliestAvailableDate(
+            ticket,
+            minStartDate,
+            planningEndDate,
+            assigneeCalendars
+          );
+          
+          // Вычисляем дату окончания
+          let daysAdded = 0;
+          let endDate = startDate;
+          while (daysAdded < workingDays && endDate < ganttCalendarDays.length) {
+            if (!ganttCalendarDays[endDate].isWeekend) {
+              daysAdded++;
+            }
+            if (daysAdded < workingDays) {
+              endDate++;
+            }
+          }
+          
+          // Сохраняем позицию задачи
+          ganttState.tasks[ticket.id] = {
+            startDate: startDate,
+          };
+          
+          // Обновляем дату окончания последней задачи эпика
+          epicLastEndDate = endDate;
+          
+          // Регистрируем занятость исполнителей (глобально)
+          if (ticket.assignees && ticket.assignees.length > 0) {
+            for (const assignee of ticket.assignees) {
+              if (!assigneeCalendars[assignee]) {
+                assigneeCalendars[assignee] = [];
+              }
+              assigneeCalendars[assignee].push({
+                start: startDate,
+                end: endDate,
+              });
+              // Сортируем диапазоны занятости по дате начала для быстрого поиска
+              assigneeCalendars[assignee].sort((a, b) => a.start - b.start);
+            }
+          }
+        }
+      }
       
       ganttAutoMode = true;
       document.getElementById('gantt-remove-auto').style.display = 'inline-block';
@@ -2163,6 +2344,7 @@
           body: JSON.stringify({
             state: ganttState,
             autoMode: ganttAutoMode,
+            expandedEpics: ganttExpandedEpics,
           }),
         });
         
@@ -2186,9 +2368,14 @@
         if (result.success && result.data) {
           ganttState = result.data.state || { tasks: {}, connections: [] };
           ganttAutoMode = result.data.autoMode || false;
+          // Восстанавливаем состояние развернутости эпиков
+          if (result.data.expandedEpics) {
+            ganttExpandedEpics = result.data.expandedEpics;
+          }
         } else {
           ganttState = { tasks: {}, connections: [] };
           ganttAutoMode = false;
+          ganttExpandedEpics = {};
         }
       } catch (e) {
         console.error('Ошибка загрузки состояния:', e);

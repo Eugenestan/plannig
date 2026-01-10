@@ -1161,7 +1161,7 @@ def api_team_gantt(request: Request, team_id: int, db: Session = Depends(get_db)
                 
                 # Объединяем условия через OR
                 conditions_str = ' OR '.join(epic_conditions)
-                tasks_jql = f'project = TNL AND ({conditions_str})'
+                tasks_jql = f'project = TNL AND status != "Отменено" AND ({conditions_str})'
                 
                 try:
                     tasks_next_token = ""
@@ -1171,7 +1171,7 @@ def api_team_gantt(request: Request, team_id: int, db: Session = Depends(get_db)
                         # Альтернатива - запросить конкретные поля, но Epic Link может иметь разный ID
                         tasks_data = jira.search_jql_page(
                             jql=tasks_jql,
-                            fields=["key", "summary", "components", "assignee", "timeoriginalestimate", "parent"],
+                            fields=["key", "summary", "components", "assignee", "timeoriginalestimate", "parent", "issuetype", "status"],
                             max_results=200,
                             next_page_token=tasks_next_token
                         )
@@ -1211,6 +1211,25 @@ def api_team_gantt(request: Request, team_id: int, db: Session = Depends(get_db)
                         continue
                 
                 if epic_key and epic_key in epic_map:
+                    # Проверяем статус - исключаем задачи со статусом "Отменено"
+                    status = task_fields.get("status", {})
+                    status_name = ""
+                    if isinstance(status, dict):
+                        status_name = status.get("name", "")
+                    elif isinstance(status, str):
+                        status_name = status
+                    
+                    if status_name and "Отменено" in status_name:
+                        continue  # Пропускаем отмененные задачи
+                    
+                    # Получаем тип задачи
+                    issue_type = task_fields.get("issuetype", {})
+                    issue_type_name = ""
+                    if isinstance(issue_type, dict):
+                        issue_type_name = issue_type.get("name", "")
+                    elif isinstance(issue_type, str):
+                        issue_type_name = issue_type
+                    
                     # Получаем компоненты
                     components = task_fields.get("components", [])
                     component_names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in components]
@@ -1242,6 +1261,8 @@ def api_team_gantt(request: Request, team_id: int, db: Session = Depends(get_db)
                         "components": component_names,
                         "assignees": assignee_account_ids,
                         "originalEstimate": round(original_estimate_hours, 2),
+                        "type": issue_type_name,
+                        "status": status_name,
                     })
         
         return JSONResponse({
@@ -1281,11 +1302,15 @@ def api_team_gantt_state(request: Request, team_id: int, db: Session = Depends(g
         
         if gantt_state:
             state_data = json.loads(gantt_state.state_data)
+            expanded_epics = state_data.get("expandedEpics", {})
+            # Убираем expandedEpics из state, чтобы не дублировать
+            state_without_expanded = {k: v for k, v in state_data.items() if k != "expandedEpics"}
             return JSONResponse({
                 "success": True,
                 "data": {
-                    "state": state_data,
+                    "state": state_without_expanded,
                     "autoMode": gantt_state.auto_mode,
+                    "expandedEpics": expanded_epics,
                 },
             })
         else:
@@ -1294,6 +1319,7 @@ def api_team_gantt_state(request: Request, team_id: int, db: Session = Depends(g
                 "data": {
                     "state": {"tasks": {}, "connections": []},
                     "autoMode": False,
+                    "expandedEpics": {},
                 },
             })
     except Exception as e:
@@ -1322,6 +1348,11 @@ def api_team_gantt_state_save(request: Request, team_id: int, db: Session = Depe
         
         state_data = body.get("state", {})
         auto_mode = body.get("autoMode", False)
+        expanded_epics = body.get("expandedEpics", {})
+        
+        # Включаем expandedEpics в state_data для сохранения
+        if expanded_epics:
+            state_data["expandedEpics"] = expanded_epics
         
         gantt_state = db.scalar(
             select(GanttState).where(

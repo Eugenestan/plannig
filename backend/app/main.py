@@ -10,11 +10,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.exc import SQLAlchemyError
 
 from .db import Base, engine, get_db
-from .models import ApiCredential, CredentialTeam, CredentialUser, GanttState, ImproveTaskOrder, Team, TeamMember, User
+from .models import ApiCredential, CredentialTeam, CredentialUser, GanttState, ImproveTaskOrder, Team, TeamMember, TodoList, TodoTask, TodoSubtask, User
 from .sync_jira import credential_has_any_team, sync_from_jira_for_credential
 from .worklog_fetcher import get_team_worklog
 from .config import settings
@@ -154,36 +154,48 @@ def sync(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
 
 @app.get("/teams/{team_id}", response_class=HTMLResponse)
 def team_detail(request: Request, team_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
-    # авторизация + доступ к команде
-    cred = get_credential_from_session(request, db)
-    allowed = db.scalar(
-        select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-    )
-    if allowed is None:
-        return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
+    try:
+        # авторизация + доступ к команде
+        cred = get_credential_from_session(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
 
-    team = db.scalar(
-        select(Team).options(joinedload(Team.members).joinedload(TeamMember.user)).where(Team.id == team_id)
-    )
-    if team is None:
-        return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
+        team = db.scalar(
+            select(Team).options(joinedload(Team.members).joinedload(TeamMember.user)).where(Team.id == team_id)
+        )
+        if team is None:
+            return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
 
-    all_users = db.scalars(
-        select(User)
-        .join(CredentialUser, CredentialUser.user_id == User.id)
-        .where(CredentialUser.credential_id == cred.id)
-        .order_by(User.display_name.asc())
-    ).all()
-    selected_user_ids = {tm.user_id for tm in team.members}
-    return templates.TemplateResponse(
-        "team_detail.html",
-        {
-            "request": request,
-            "team": team,
-            "all_users": all_users,
-            "selected_user_ids": selected_user_ids,
-        },
-    )
+        all_users = db.scalars(
+            select(User)
+            .join(CredentialUser, CredentialUser.user_id == User.id)
+            .where(CredentialUser.credential_id == cred.id)
+            .order_by(User.display_name.asc())
+        ).all()
+        selected_user_ids = {tm.user_id for tm in team.members}
+        return templates.TemplateResponse(
+            "team_detail.html",
+            {
+                "request": request,
+                "team": team,
+                "all_users": all_users,
+                "selected_user_ids": selected_user_ids,
+            },
+        )
+    except RuntimeError as e:
+        # Если нет авторизации, перенаправляем на главную
+        return RedirectResponse(url="/", status_code=303)
+    except Exception as e:
+        import traceback
+        print(f"Error in team_detail: {traceback.format_exc()}")
+        return templates.TemplateResponse(
+            "not_found.html",
+            {"request": request, "message": f"Ошибка: {str(e)}"},
+            status_code=500,
+        )
 
 
 @app.post("/teams/{team_id}/members", response_class=RedirectResponse)
@@ -221,27 +233,39 @@ def update_team_members(
 
 @app.get("/teams/{team_id}/dashboard", response_class=HTMLResponse)
 def team_dashboard(request: Request, team_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
-    cred = get_credential_from_session(request, db)
-    allowed = db.scalar(
-        select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-    )
-    if allowed is None:
-        return RedirectResponse(url="/", status_code=303)
-    
-    team = db.scalar(select(Team).where(Team.id == team_id))
-    if team is None:
-        return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
+    try:
+        cred = get_credential_from_session(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return RedirectResponse(url="/", status_code=303)
+        
+        team = db.scalar(select(Team).where(Team.id == team_id))
+        if team is None:
+            return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
 
-    days_param = request.query_params.get("days", "today")
-    
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "team": team,
-            "days": days_param,
-        },
-    )
+        days_param = request.query_params.get("days", "today")
+        
+        return templates.TemplateResponse(
+            "dashboard.html",
+            {
+                "request": request,
+                "team": team,
+                "days": days_param,
+            },
+        )
+    except RuntimeError as e:
+        # Если нет авторизации, перенаправляем на главную
+        return RedirectResponse(url="/", status_code=303)
+    except Exception as e:
+        import traceback
+        print(f"Error in team_dashboard: {traceback.format_exc()}")
+        return templates.TemplateResponse(
+            "not_found.html",
+            {"request": request, "message": f"Ошибка: {str(e)}"},
+            status_code=500,
+        )
 
 
 @app.post("/verify-key", response_class=RedirectResponse)
@@ -258,20 +282,34 @@ def verify_api_key(request: Request, api_key: str = Form(...)):
 
     db = SessionLocal()
     try:
-        # 1) Пробуем сходить в Jira этим ключом и получить команды
+        # 1) Пробуем сходить в Jira этим ключом и проверить, что ключ валидный
         try:
             jira, api_prefix = build_jira_client_from_api_key(api_key)
-        except Exception:
-            return RedirectResponse(url="/?error=" + "Ключ не подходит, получите ключ в настройках Jira", status_code=303)
-
-        has_teams = False
-        try:
-            has_teams = credential_has_any_team(jira=jira, api_prefix=api_prefix, team_field_name="TEAM")
-        except Exception:
-            has_teams = False
-
-        if not has_teams:
-            return RedirectResponse(url="/?error=" + "Ключ не подходит, получите ключ в настройках Jira", status_code=303)
+            # Проверяем, что ключ работает - делаем простой запрос к Jira
+            # detect_api_prefix уже делает запрос к serverInfo, но проверим еще раз для уверенности
+            test_response = jira.request("GET", f"{api_prefix}/serverInfo")
+            if test_response.status_code != 200:
+                error_text = test_response.text[:200] if test_response.text else ""
+                return RedirectResponse(
+                    url="/?error=" + f"Ключ не подходит (HTTP {test_response.status_code}): {error_text}", 
+                    status_code=303
+                )
+        except RuntimeError as e:
+            # RuntimeError может быть из detect_api_prefix или других проверок
+            error_msg = str(e)
+            return RedirectResponse(
+                url="/?error=" + f"Ошибка проверки ключа: {error_msg}", 
+                status_code=303
+            )
+        except Exception as e:
+            import traceback
+            error_msg = str(e)
+            print(f"Error validating API key: {error_msg}")
+            print(traceback.format_exc())
+            return RedirectResponse(
+                url="/?error=" + f"Ключ не подходит: {error_msg}", 
+                status_code=303
+            )
 
         # 2) Сохраняем credential на сервере, в сессии — только session_key
         session_key = _get_session_key(request)
@@ -283,13 +321,35 @@ def verify_api_key(request: Request, api_key: str = Form(...)):
         if cred is None:
             cred = ApiCredential(session_key=session_key, jira_api_key=api_key)
             db.add(cred)
-            db.flush()
         else:
             cred.jira_api_key = api_key
-            db.flush()
-
+        db.flush()  # Получаем cred.id для синхронизации
+        
         # 3) Синхронизируем команды/пользователей и привязываем доступ только к этому credential
-        sync_from_jira_for_credential(db, credential_id=cred.id, jira=jira, api_prefix=api_prefix, clear_existing_links=True)
+        # Если синхронизация не удалась (например, нет поля TEAM или нет команд), это не критично - авторизация уже прошла
+        try:
+            sync_result = sync_from_jira_for_credential(db, credential_id=cred.id, jira=jira, api_prefix=api_prefix, clear_existing_links=True)
+            print(f"Sync completed: {sync_result}")
+        except RuntimeError as sync_error:
+            # RuntimeError может быть из-за отсутствия поля TEAM или других проблем конфигурации
+            error_msg = str(sync_error)
+            if "не найдено" in error_msg.lower() or "not found" in error_msg.lower():
+                # Поле не найдено - это нормально, просто логируем
+                print(f"Info: Field not found during sync: {error_msg}")
+            else:
+                # Другая ошибка - логируем как предупреждение
+                import traceback
+                print(f"Warning: Failed to sync teams/users: {error_msg}")
+                print(traceback.format_exc())
+        except Exception as sync_error:
+            # Логируем ошибку синхронизации, но не прерываем авторизацию
+            import traceback
+            print(f"Warning: Failed to sync teams/users: {sync_error}")
+            print(traceback.format_exc())
+            # Авторизация все равно успешна, даже если синхронизация не удалась
+        
+        # Коммитим все изменения (credential + синхронизация)
+        db.commit()
 
         return RedirectResponse(url="/", status_code=303)
     finally:
@@ -1387,6 +1447,643 @@ def api_team_gantt_state_save(request: Request, team_id: int, db: Session = Depe
         db.rollback()
         return JSONResponse(
             {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+# ==================== TODO API ====================
+
+@app.get("/api/todo/lists")
+def api_todo_lists(request: Request, db: Session = Depends(get_db)):
+    """API endpoint для получения списков Todo."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        # Если нет авторизации, возвращаем пустой список
+        return JSONResponse({
+            "success": True,
+            "data": [],
+        })
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        lists = db.scalars(
+            select(TodoList)
+            .where(TodoList.credential_id == cred.id)
+            .order_by(TodoList.position)
+        ).all()
+        
+        return JSONResponse({
+            "success": True,
+            "data": [{"id": l.id, "name": l.name, "position": l.position} for l in lists],
+        })
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.post("/api/todo/lists")
+def api_todo_lists_create(request: Request, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для создания списка Todo."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import func
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        name = body.get("name", "").strip()
+        if not name:
+            return JSONResponse({"success": False, "error": "Название списка обязательно"}, status_code=400)
+        
+        # Определяем максимальную позицию
+        max_position = db.scalar(
+            select(func.max(TodoList.position))
+            .where(TodoList.credential_id == cred.id)
+        ) or -1
+        
+        new_list = TodoList(
+            credential_id=cred.id,
+            name=name,
+            position=max_position + 1,
+        )
+        db.add(new_list)
+        db.commit()
+        db.refresh(new_list)
+        
+        return JSONResponse({
+            "success": True,
+            "data": {"id": new_list.id, "name": new_list.name, "position": new_list.position},
+        })
+    except Exception as e:
+        db.rollback()
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.patch("/api/todo/lists/{list_id}")
+def api_todo_lists_update(request: Request, list_id: int, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для обновления списка Todo."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        todo_list = db.scalar(
+            select(TodoList).where(TodoList.id == list_id, TodoList.credential_id == cred.id)
+        )
+        if not todo_list:
+            return JSONResponse({"success": False, "error": "Список не найден"}, status_code=404)
+        
+        if "name" in body:
+            todo_list.name = body["name"].strip()
+        
+        db.commit()
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.delete("/api/todo/lists/{list_id}")
+def api_todo_lists_delete(request: Request, list_id: int, db: Session = Depends(get_db)):
+    """API endpoint для удаления списка Todo."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        todo_list = db.scalar(
+            select(TodoList).where(TodoList.id == list_id, TodoList.credential_id == cred.id)
+        )
+        if not todo_list:
+            return JSONResponse({"success": False, "error": "Список не найден"}, status_code=404)
+        
+        db.delete(todo_list)
+        db.commit()
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.get("/api/todo/tasks")
+def api_todo_tasks(request: Request, db: Session = Depends(get_db), list: str = None):
+    """API endpoint для получения задач Todo."""
+    from fastapi.responses import JSONResponse
+    from datetime import datetime, date
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        # Если нет авторизации, возвращаем пустой список
+        return JSONResponse({
+            "success": True,
+            "data": [],
+        })
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        # Сохраняем встроенную функцию list
+        list_func = __builtins__.get('list') or list
+        
+        query = select(TodoTask).where(TodoTask.credential_id == cred.id)
+        
+        # Фильтрация по типу списка
+        if list:
+            if list.startswith("custom-"):
+                list_id = int(list.replace("custom-", ""))
+                query = query.where(TodoTask.list_id == list_id)
+            elif list == "my-day":
+                # Задачи с датой = сегодня или добавленные вручную в "Мой день"
+                # Исключаем выполненные задачи
+                today = date.today()
+                query = query.where(
+                    ((TodoTask.list_type == "my-day") | (TodoTask.due_date == today))
+                    & (TodoTask.completed == False)
+                )
+            elif list == "important":
+                query = query.where(TodoTask.priority == "important", TodoTask.completed == False)
+            elif list == "planned":
+                query = query.where(TodoTask.due_date.isnot(None))
+            elif list == "all":
+                pass  # Все задачи
+            elif list == "completed":
+                query = query.where(TodoTask.completed == True)
+        
+        # Загружаем задачи
+        tasks = db.scalars(
+            query.order_by(TodoTask.position)
+        ).all()
+        
+        # Получаем все ID задач
+        task_ids = [task.id for task in tasks]
+        
+        # Загружаем все подзадачи для этих задач одним запросом
+        subtasks_map = {}
+        if task_ids:
+            all_subtasks = db.scalars(
+                select(TodoSubtask)
+                .where(TodoSubtask.task_id.in_(task_ids))
+                .order_by(TodoSubtask.position)
+            ).all()
+            
+            # Группируем подзадачи по task_id
+            for subtask in all_subtasks:
+                if subtask.task_id not in subtasks_map:
+                    subtasks_map[subtask.task_id] = []
+                subtasks_map[subtask.task_id].append(subtask)
+        
+        result = []
+        for task in tasks:
+            task_data = {
+                "id": task.id,
+                "name": task.name,
+                "completed": task.completed,
+                "priority": task.priority,
+                "due_date": task.due_date.isoformat() if task.due_date else None,
+                "reminder": task.reminder.isoformat() if task.reminder else None,
+                "repeat": task.repeat,
+                "notes": task.notes,
+            }
+            
+            # Получаем подзадачи из словаря
+            subtasks_list = subtasks_map.get(task.id, [])
+            
+            task_data["subtasks"] = [
+                {"id": st.id, "name": st.name, "completed": st.completed}
+                for st in subtasks_list
+            ]
+            
+            result.append(task_data)
+        
+        return JSONResponse({"success": True, "data": result})
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.post("/api/todo/tasks")
+def api_todo_tasks_create(request: Request, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для создания задачи Todo."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import func
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        # Если нет авторизации, возвращаем ошибку
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        name = body.get("name", "").strip()
+        if not name:
+            return JSONResponse({"success": False, "error": "Название задачи обязательно"}, status_code=400)
+        
+        list_id = body.get("list_id")
+        list_type = body.get("list_type")
+        
+        # Определяем максимальную позицию
+        query = select(func.max(TodoTask.position)).where(TodoTask.credential_id == cred.id)
+        if list_id:
+            query = query.where(TodoTask.list_id == list_id)
+        elif list_type:
+            query = query.where(TodoTask.list_type == list_type)
+        
+        max_position = db.scalar(query) or -1
+        
+        priority = body.get("priority", "normal")
+        
+        new_task = TodoTask(
+            credential_id=cred.id,
+            list_id=list_id,
+            list_type=list_type,
+            name=name,
+            position=max_position + 1,
+            priority=priority,
+        )
+        db.add(new_task)
+        db.commit()
+        db.refresh(new_task)
+        
+        return JSONResponse({
+            "success": True,
+            "data": {"id": new_task.id, "name": new_task.name},
+        })
+    except Exception as e:
+        db.rollback()
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.get("/api/todo/tasks/{task_id}")
+def api_todo_tasks_get(request: Request, task_id: int, db: Session = Depends(get_db)):
+    """API endpoint для получения задачи Todo."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        # Сохраняем встроенную функцию list
+        list_func = __builtins__.get('list') or list
+        
+        task = db.scalar(
+            select(TodoTask)
+            .where(TodoTask.id == task_id, TodoTask.credential_id == cred.id)
+            .options(selectinload(TodoTask.subtasks))
+        )
+        if not task:
+            return JSONResponse({"success": False, "error": "Задача не найдена"}, status_code=404)
+        
+        # Загружаем подзадачи
+        subtasks_list = []
+        if hasattr(task, 'subtasks') and task.subtasks is not None:
+            try:
+                # Пробуем получить коллекцию подзадач
+                if hasattr(task.subtasks, '__iter__') and not isinstance(task.subtasks, (str, bytes)):
+                    subtasks_list = list_func(task.subtasks)
+            except (TypeError, AttributeError) as e:
+                # Если не удалось преобразовать в список, оставляем пустым
+                subtasks_list = []
+        
+        task_data = {
+            "id": task.id,
+            "name": task.name,
+            "completed": task.completed,
+            "priority": task.priority,
+            "due_date": task.due_date.isoformat() if task.due_date else None,
+            "reminder": task.reminder.isoformat() if task.reminder else None,
+            "repeat": task.repeat,
+            "notes": task.notes,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "subtasks": [
+                {"id": st.id, "name": st.name, "completed": st.completed, "position": st.position}
+                for st in subtasks_list
+            ],
+        }
+        
+        return JSONResponse({"success": True, "data": task_data})
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.patch("/api/todo/tasks/{task_id}")
+def api_todo_tasks_update(request: Request, task_id: int, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для обновления задачи Todo."""
+    from fastapi.responses import JSONResponse
+    from datetime import datetime
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        task = db.scalar(
+            select(TodoTask).where(TodoTask.id == task_id, TodoTask.credential_id == cred.id)
+        )
+        if not task:
+            return JSONResponse({"success": False, "error": "Задача не найдена"}, status_code=404)
+        
+        if "name" in body:
+            task.name = body["name"].strip()
+        if "completed" in body:
+            task.completed = body["completed"]
+        if "priority" in body:
+            task.priority = body["priority"]
+        if "due_date" in body:
+            task.due_date = datetime.fromisoformat(body["due_date"]) if body["due_date"] else None
+        if "reminder" in body:
+            task.reminder = datetime.fromisoformat(body["reminder"]) if body["reminder"] else None
+        if "repeat" in body:
+            task.repeat = body["repeat"] if body["repeat"] else None
+        if "notes" in body:
+            task.notes = body["notes"]
+        
+        db.commit()
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        db.rollback()
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.delete("/api/todo/tasks/{task_id}")
+def api_todo_tasks_delete(request: Request, task_id: int, db: Session = Depends(get_db)):
+    """API endpoint для удаления задачи Todo."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        task = db.scalar(
+            select(TodoTask).where(TodoTask.id == task_id, TodoTask.credential_id == cred.id)
+        )
+        if not task:
+            return JSONResponse({"success": False, "error": "Задача не найдена"}, status_code=404)
+        
+        db.delete(task)
+        db.commit()
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.post("/api/todo/tasks/{task_id}/subtasks")
+def api_todo_subtasks_create(request: Request, task_id: int, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для создания подзадачи."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import func
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        task = db.scalar(
+            select(TodoTask).where(TodoTask.id == task_id, TodoTask.credential_id == cred.id)
+        )
+        if not task:
+            return JSONResponse({"success": False, "error": "Задача не найдена"}, status_code=404)
+        
+        name = body.get("name", "").strip()
+        if not name:
+            return JSONResponse({"success": False, "error": "Название подзадачи обязательно"}, status_code=400)
+        
+        max_position = db.scalar(
+            select(func.max(TodoSubtask.position))
+            .where(TodoSubtask.task_id == task_id)
+        ) or -1
+        
+        new_subtask = TodoSubtask(
+            task_id=task_id,
+            name=name,
+            position=max_position + 1,
+        )
+        db.add(new_subtask)
+        db.commit()
+        db.refresh(new_subtask)
+        
+        return JSONResponse({
+            "success": True,
+            "data": {"id": new_subtask.id, "name": new_subtask.name},
+        })
+    except Exception as e:
+        db.rollback()
+        import traceback
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.patch("/api/todo/subtasks/{subtask_id}")
+def api_todo_subtasks_update(request: Request, subtask_id: int, db: Session = Depends(get_db), body: dict = Body(...)):
+    """API endpoint для обновления подзадачи."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        subtask = db.scalar(
+            select(TodoSubtask)
+            .join(TodoTask)
+            .where(TodoSubtask.id == subtask_id, TodoTask.credential_id == cred.id)
+        )
+        if not subtask:
+            return JSONResponse({"success": False, "error": "Подзадача не найдена"}, status_code=404)
+        
+        if "name" in body:
+            subtask.name = body["name"].strip()
+        if "completed" in body:
+            subtask.completed = body["completed"]
+        
+        db.commit()
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+
+
+@app.delete("/api/todo/subtasks/{subtask_id}")
+def api_todo_subtasks_delete(request: Request, subtask_id: int, db: Session = Depends(get_db)):
+    """API endpoint для удаления подзадачи."""
+    from fastapi.responses import JSONResponse
+    
+    try:
+        cred = get_credential_from_session(request, db)
+    except RuntimeError as e:
+        return JSONResponse(
+            {"success": False, "error": "Не авторизован"},
+            status_code=401,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": str(e)},
+            status_code=500,
+        )
+    
+    try:
+        subtask = db.scalar(
+            select(TodoSubtask)
+            .join(TodoTask)
+            .where(TodoSubtask.id == subtask_id, TodoTask.credential_id == cred.id)
+        )
+        if not subtask:
+            return JSONResponse({"success": False, "error": "Подзадача не найдена"}, status_code=404)
+        
+        db.delete(subtask)
+        db.commit()
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        db.rollback()
+        return JSONResponse(
+            {"success": False, "error": str(e)},
             status_code=500,
         )
 

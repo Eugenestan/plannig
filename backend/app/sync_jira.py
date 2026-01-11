@@ -35,7 +35,14 @@ def sync_from_jira_for_credential(
         db.flush()
 
     fields = jira.get_fields(api_prefix)
-    team_field_id = find_field_id(fields, team_field_name)
+    
+    # Пытаемся найти поле TEAM, если не найдено - просто возвращаем пустой результат
+    try:
+        team_field_id = find_field_id(fields, team_field_name)
+    except RuntimeError:
+        # Поле TEAM не найдено - это нормально, не все Jira инстансы имеют это поле
+        # Возвращаем пустой результат синхронизации
+        return {"teams_created": 0, "users_created": 0, "links_created": 0}
 
     jql = f'"{team_field_id}" is not EMPTY'
     page_size = 200

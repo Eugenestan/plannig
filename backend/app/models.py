@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -155,3 +155,76 @@ class GanttState(Base):
     team: Mapped[Team] = relationship()
     
     __table_args__ = (UniqueConstraint("credential_id", "team_id", name="uq_gantt_state"),)
+
+
+class TodoList(Base):
+    """
+    Пользовательские списки задач Todo.
+    Привязаны к credential (пользователю/сессии).
+    """
+    
+    __tablename__ = "todo_lists"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Порядок отображения
+    
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    credential: Mapped[ApiCredential] = relationship()
+    tasks: Mapped[list["TodoTask"]] = relationship(back_populates="list", cascade="all, delete-orphan")
+
+
+class TodoTask(Base):
+    """
+    Задачи Todo.
+    Могут быть привязаны к списку или к системному списку (my-day, important, etc.).
+    """
+    
+    __tablename__ = "todo_tasks"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    list_id: Mapped[int | None] = mapped_column(ForeignKey("todo_lists.id", ondelete="CASCADE"), nullable=True)
+    list_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # 'my-day', 'important', 'planned', 'all', 'completed' или null
+    
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal", server_default="'normal'")  # 'normal' или 'important'
+    
+    due_date: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)  # Дата выполнения
+    reminder: Mapped[DateTime | None] = mapped_column(DateTime, nullable=True)  # Напоминание
+    repeat: Mapped[str | None] = mapped_column(String(20), nullable=True)  # 'daily', 'weekly', 'monthly' или null
+    
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # Заметки
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Порядок в списке
+    
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    credential: Mapped["ApiCredential"] = relationship()
+    list: Mapped["TodoList | None"] = relationship("TodoList", back_populates="tasks")
+    subtasks: Mapped[list["TodoSubtask"]] = relationship("TodoSubtask", back_populates="task", cascade="all, delete-orphan")
+
+
+class TodoSubtask(Base):
+    """
+    Подзадачи Todo.
+    Привязаны к основной задаче.
+    """
+    
+    __tablename__ = "todo_subtasks"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("todo_tasks.id", ondelete="CASCADE"), nullable=False)
+    
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # Порядок в списке подзадач
+    
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    task: Mapped["TodoTask"] = relationship("TodoTask", back_populates="subtasks")

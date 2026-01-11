@@ -50,6 +50,9 @@
         <button id="tab-gantt" class="tab-button" onclick="switchTab('gantt')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
           Гант
         </button>
+        <button id="tab-todo" class="tab-button" onclick="switchTab('todo')" style="padding: 12px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--muted);">
+          Todo
+        </button>
       </div>
     </div>
 
@@ -274,10 +277,155 @@
             <!-- SVG для связей между задачами -->
             <svg id="gantt-connections" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; overflow: visible;"></svg>
           </div>
+          </div>
         </div>
       </div>
     </div>
-  </div>
+
+    <!-- Таб: Todo -->
+    <div id="tab-content-todo" class="tab-content" style="display: none; max-width: 100%; margin: 0 auto; box-sizing: border-box; width: calc(100% - 56px); height: calc(100vh - 200px);">
+      <div class="card" style="border-radius: 0 0 14px 14px; margin-top: 0; padding: 0; width: 100%; box-sizing: border-box; height: 100%; display: flex; flex-direction: column;">
+        <div id="todo-container" style="display: flex; flex: 1; overflow: hidden;">
+          <!-- Левая панель - списки -->
+          <div id="todo-sidebar" style="width: 280px; border-right: 1px solid var(--border); background: var(--card); overflow-y: auto; display: flex; flex-direction: column;">
+            <div style="padding: 16px; border-bottom: 1px solid var(--border);">
+              <h2 style="margin: 0; font-size: 20px; font-weight: 600;">Списки</h2>
+            </div>
+            <div id="todo-lists" style="flex: 1; overflow-y: auto; padding: 8px 0;">
+              <!-- Системные списки -->
+              <div class="todo-list-item todo-list-system active" data-list-type="my-day" onclick="selectTodoList('my-day')">
+                <span class="todo-list-icon">📅</span>
+                <span class="todo-list-name">Мой день</span>
+              </div>
+              <div class="todo-list-item todo-list-system" data-list-type="important" onclick="selectTodoList('important')">
+                <span class="todo-list-icon">⭐</span>
+                <span class="todo-list-name">Важно</span>
+              </div>
+              <div class="todo-list-item todo-list-system" data-list-type="planned" onclick="selectTodoList('planned')">
+                <span class="todo-list-icon">📆</span>
+                <span class="todo-list-name">Запланировано</span>
+              </div>
+              <div class="todo-list-item todo-list-system" data-list-type="all" onclick="selectTodoList('all')">
+                <span class="todo-list-icon">📋</span>
+                <span class="todo-list-name">Все</span>
+              </div>
+              <div class="todo-list-item todo-list-system" data-list-type="completed" onclick="selectTodoList('completed')">
+                <span class="todo-list-icon">✅</span>
+                <span class="todo-list-name">Выполнено</span>
+              </div>
+              
+              <!-- Разделитель -->
+              <div style="margin: 8px 16px; border-top: 1px solid var(--border);"></div>
+              
+              <!-- Пользовательские списки -->
+              <div id="todo-custom-lists"></div>
+              
+              <!-- Кнопка добавления списка -->
+              <div class="todo-list-item todo-list-add" onclick="showAddListDialog()" style="color: var(--primary); cursor: pointer;">
+                <span class="todo-list-icon">+</span>
+                <span class="todo-list-name">Новый список</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Центральная область - задачи -->
+          <div id="todo-main" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+            <div id="todo-header" style="padding: 16px; border-bottom: 1px solid var(--border);">
+              <h2 id="todo-list-title" style="margin: 0; font-size: 20px; font-weight: 600;">Мой день</h2>
+              <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="todo-search" placeholder="Поиск задач..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;" onkeyup="filterTodoTasks()">
+                <select id="todo-filter-priority" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: white; color: black;" onchange="filterTodoTasks()">
+                  <option value="">Все приоритеты</option>
+                  <option value="important">Важно</option>
+                  <option value="normal">Обычный</option>
+                </select>
+              </div>
+            </div>
+            <div id="todo-tasks-container" style="flex: 1; overflow-y: auto; padding: 16px;">
+              <div id="todo-tasks-list"></div>
+              <div id="todo-add-task" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+                <textarea id="todo-new-task-input" placeholder="Добавить задачу" style="width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); font-size: 14px; color: white; resize: vertical; min-height: 40px;" onkeydown="handleTodoTaskInput(event)"></textarea>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Правая панель - детали задачи -->
+          <div id="todo-details" style="width: 320px; border-left: 1px solid var(--border); background: var(--card); overflow-y: auto; display: none; padding: 16px;">
+            <div id="todo-details-content">
+              <h3 id="todo-details-title" style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: white;">Детали задачи</h3>
+              
+              <!-- Дата создания -->
+              <div style="margin-bottom: 16px; padding: 8px; background: var(--hover); border-radius: 6px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Дата создания</label>
+                <span id="todo-details-created" style="font-size: 14px; color: white;"></span>
+              </div>
+              
+              <!-- Название -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Название</label>
+                <input type="text" id="todo-details-name" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;" onchange="saveTodoTaskDetails()">
+              </div>
+              
+              <!-- Статус -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="checkbox" id="todo-details-completed" onchange="saveTodoTaskDetails()">
+                  <span style="font-size: 14px; color: white;">Выполнена</span>
+                </label>
+              </div>
+              
+              <!-- Приоритет -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Приоритет</label>
+                <select id="todo-details-priority" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;" onchange="saveTodoTaskDetails()">
+                  <option value="normal" style="background: var(--card); color: white;">Обычный</option>
+                  <option value="important" style="background: var(--card); color: white;">Важно</option>
+                </select>
+              </div>
+              
+              <!-- Дата выполнения -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Дата выполнения</label>
+                <input type="date" id="todo-details-due-date" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;" onchange="saveTodoTaskDetails()">
+              </div>
+              
+              <!-- Напоминание -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Напоминание</label>
+                <input type="datetime-local" id="todo-details-reminder" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;" onchange="saveTodoTaskDetails()">
+              </div>
+              
+              <!-- Повторение -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Повторение</label>
+                <select id="todo-details-repeat" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;" onchange="saveTodoTaskDetails()">
+                  <option value="" style="background: var(--card); color: white;">Не повторять</option>
+                  <option value="daily" style="background: var(--card); color: white;">Ежедневно</option>
+                  <option value="weekly" style="background: var(--card); color: white;">Еженедельно</option>
+                  <option value="monthly" style="background: var(--card); color: white;">Ежемесячно</option>
+                </select>
+              </div>
+              
+              <!-- Описание -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted);">Описание</label>
+                <textarea id="todo-details-notes" rows="4" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white; resize: vertical;" onchange="saveTodoTaskDetails()" placeholder="Добавьте описание задачи..."></textarea>
+              </div>
+              
+              <!-- Подзадачи -->
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 8px; font-size: 12px; color: rgba(255, 255, 255, 0.7);">Подзадачи</label>
+                <div id="todo-details-subtasks"></div>
+                <button onclick="addTodoSubtask()" style="margin-top: 8px; padding: 6px 12px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px;">+ Добавить подзадачу</button>
+              </div>
+              
+              <!-- Кнопка удаления -->
+              <button onclick="deleteTodoTask()" style="width: 100%; padding: 8px; background: #ff5b5b; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Удалить задачу</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
   <script>
     const days = {{ days|tojson }};
@@ -530,6 +678,16 @@
       if (tabName === 'gantt' && !window.ganttLoaded) {
         loadGantt();
         window.ganttLoaded = true;
+      }
+      
+      // Загружаем данные для таба "Todo" при первом открытии
+      if (tabName === 'todo' && !window.todoLoaded) {
+        try {
+          loadTodo();
+        } catch (e) {
+          console.error('Todo load error:', e);
+        }
+        window.todoLoaded = true;
       }
     }
     
@@ -2383,6 +2541,709 @@
         ganttAutoMode = false;
       }
     }
+    // ==================== TODO ====================
+    
+    // Глобальные переменные для Todo
+    let todoCurrentList = 'my-day';
+    let todoTasks = [];
+    let todoLists = [];
+    let todoSelectedTask = null;
+    
+    // Загрузка Todo данных
+    async function loadTodo() {
+      try {
+        // Загружаем списки
+        const listsResponse = await fetch(`/api/todo/lists`);
+        if (listsResponse.ok) {
+          const listsData = await listsResponse.json();
+          if (listsData.success) {
+            todoLists = listsData.data || [];
+            renderTodoLists();
+          }
+        } else {
+          // Если ошибка авторизации, просто не загружаем данные
+          console.warn('Todo lists not available:', listsResponse.status);
+        }
+        
+        // Загружаем задачи для текущего списка
+        await loadTodoTasks();
+      } catch (e) {
+        console.error('Todo load error:', e);
+      }
+    }
+    
+    // Загрузка задач для текущего списка
+    async function loadTodoTasks() {
+      try {
+        const response = await fetch(`/api/todo/tasks?list=${todoCurrentList}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            todoTasks = data.data || [];
+            renderTodoTasks();
+          }
+        } else {
+          // Если ошибка авторизации, просто не загружаем данные
+          console.warn('Todo tasks not available:', response.status);
+          todoTasks = [];
+          renderTodoTasks();
+        }
+      } catch (e) {
+        console.error('Todo tasks load error:', e);
+        todoTasks = [];
+        renderTodoTasks();
+      }
+    }
+    
+    // Выбор списка
+    function selectTodoList(listType) {
+      todoCurrentList = listType;
+      
+      // Обновляем активный список
+      document.querySelectorAll('.todo-list-item').forEach(item => {
+        item.classList.remove('active');
+      });
+      document.querySelector(`[data-list-type="${listType}"]`)?.classList.add('active');
+      
+      // Обновляем заголовок
+      const titles = {
+        'my-day': 'Мой день',
+        'important': 'Важно',
+        'planned': 'Запланировано',
+        'all': 'Все',
+        'completed': 'Выполнено'
+      };
+      document.getElementById('todo-list-title').textContent = titles[listType] || 'Список';
+      
+      // Загружаем задачи
+      loadTodoTasks();
+      
+      // Закрываем детали задачи
+      document.getElementById('todo-details').style.display = 'none';
+      todoSelectedTask = null;
+    }
+    
+    // Рендеринг списков
+    function renderTodoLists() {
+      const container = document.getElementById('todo-custom-lists');
+      container.innerHTML = '';
+      
+      todoLists.forEach(list => {
+        const item = document.createElement('div');
+        item.className = 'todo-list-item';
+        item.dataset.listId = list.id;
+        item.onclick = () => selectTodoList(`custom-${list.id}`);
+        item.innerHTML = `
+          <span class="todo-list-icon">📝</span>
+          <span class="todo-list-name">${escapeHtml(list.name)}</span>
+          <span class="todo-list-actions" onclick="event.stopPropagation(); showEditListDialog(${list.id})" style="margin-left: auto; opacity: 0.5; cursor: pointer;">✏️</span>
+        `;
+        container.appendChild(item);
+      });
+    }
+    
+    // Рендеринг задач
+    function renderTodoTasks() {
+      const container = document.getElementById('todo-tasks-list');
+      container.innerHTML = '';
+      
+      if (todoTasks.length === 0) {
+        container.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 40px;">Нет задач</div>';
+        return;
+      }
+      
+      todoTasks.forEach(task => {
+        // Создаем контейнер для задачи и её подзадач
+        const taskWrapper = document.createElement('div');
+        taskWrapper.className = 'todo-task-wrapper';
+        
+        const taskDiv = document.createElement('div');
+        taskDiv.className = 'todo-task-item';
+        taskDiv.dataset.taskId = task.id;
+        if (task.completed) {
+          taskDiv.classList.add('completed');
+        }
+        
+        const priorityIcon = task.priority === 'important' ? '⭐' : '';
+        const dueDate = task.due_date ? new Date(task.due_date).toLocaleDateString('ru-RU') : '';
+        const reminder = task.reminder ? new Date(task.reminder).toLocaleString('ru-RU') : '';
+        
+        const isFavorite = task.priority === 'important';
+        taskDiv.innerHTML = `
+          <input type="checkbox" class="todo-checkbox" ${task.completed ? 'checked' : ''} onchange="toggleTodoTask(${task.id}, this.checked)">
+          <span class="todo-task-name" onclick="openTodoTaskDetails(${task.id})">${escapeHtml(task.name)}</span>
+          <span class="todo-task-indicators">
+            ${priorityIcon ? `<span title="Важно">${priorityIcon}</span>` : ''}
+            ${dueDate ? `<span title="Дата: ${dueDate}">📅</span>` : ''}
+            ${reminder ? `<span title="Напоминание: ${reminder}">🔔</span>` : ''}
+            ${task.repeat ? `<span title="Повторение">🔄</span>` : ''}
+            <span class="todo-favorite-icon" onclick="event.stopPropagation(); toggleTodoFavorite(${task.id}, ${!isFavorite})" title="${isFavorite ? 'Убрать из избранного' : 'Добавить в избранное'}">${isFavorite ? '⭐' : '☆'}</span>
+          </span>
+        `;
+        
+        taskWrapper.appendChild(taskDiv);
+        
+        // Добавляем подзадачи, если они есть
+        // Проверяем наличие подзадач - убеждаемся, что это массив
+        const subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+        
+        if (subtasks && subtasks.length > 0) {
+          const subtasksContainer = document.createElement('div');
+          subtasksContainer.className = 'todo-subtasks-container';
+          
+          subtasks.forEach(subtask => {
+            const subtaskDiv = document.createElement('div');
+            subtaskDiv.className = 'todo-subtask-item';
+            subtaskDiv.dataset.subtaskId = subtask.id;
+            if (subtask.completed) {
+              subtaskDiv.classList.add('completed');
+            }
+            
+            subtaskDiv.innerHTML = `
+              <input type="checkbox" class="todo-checkbox" ${subtask.completed ? 'checked' : ''} onchange="toggleTodoSubtask(${subtask.id}, this.checked)">
+              <span class="todo-subtask-name">${escapeHtml(subtask.name)}</span>
+            `;
+            
+            subtasksContainer.appendChild(subtaskDiv);
+          });
+          
+          taskWrapper.appendChild(subtasksContainer);
+        }
+        
+        container.appendChild(taskWrapper);
+      });
+    }
+    
+    // Обработка ввода новой задачи
+    async function handleTodoTaskInput(event) {
+      if (event.key === 'Enter' && !event.ctrlKey) {
+        event.preventDefault();
+        const input = event.target;
+        const name = input.value.trim();
+        if (name) {
+          await createTodoTask(name);
+          input.value = '';
+          input.style.height = 'auto';
+        }
+      } else if (event.key === 'Enter' && event.ctrlKey) {
+        // Ctrl+Enter - перенос строки, не обрабатываем
+        return;
+      }
+    }
+    
+    // Создание задачи
+    async function createTodoTask(name) {
+      try {
+        let listId = null;
+        let listType = null;
+        
+        if (todoCurrentList.startsWith('custom-')) {
+          listId = parseInt(todoCurrentList.replace('custom-', ''));
+        } else {
+          // Для системных списков устанавливаем list_type
+          listType = todoCurrentList;
+          // Если это "important" или "planned", также устанавливаем соответствующие поля
+          if (todoCurrentList === 'important') {
+            // Для списка "Важно" устанавливаем priority
+            // Но list_type не устанавливаем, чтобы задача попала в фильтр
+          } else if (todoCurrentList === 'planned') {
+            // Для списка "Запланировано" нужно будет установить due_date
+            // Но это делается при редактировании задачи
+          }
+        }
+        
+        const response = await fetch('/api/todo/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            list_id: listId,
+            list_type: listType,
+            priority: todoCurrentList === 'important' ? 'important' : 'normal',
+          }),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            await loadTodoTasks();
+            return data.data;
+          }
+        }
+      } catch (e) {
+        console.error('Create task error:', e);
+      }
+      return null;
+    }
+    
+    // Переключение избранного
+    async function toggleTodoFavorite(taskId, isFavorite) {
+      try {
+        const response = await fetch(`/api/todo/tasks/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ priority: isFavorite ? 'important' : 'normal' }),
+        });
+        
+        if (response.ok) {
+          await loadTodoTasks();
+        }
+      } catch (e) {
+        console.error('Toggle favorite error:', e);
+      }
+    }
+    
+    // Переключение статуса задачи
+    async function toggleTodoTask(taskId, completed) {
+      try {
+        const response = await fetch(`/api/todo/tasks/${taskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completed }),
+        });
+        
+        if (response.ok) {
+          await loadTodoTasks();
+        }
+      } catch (e) {
+        console.error('Toggle task error:', e);
+      }
+    }
+    
+    // Открытие деталей задачи
+    async function openTodoTaskDetails(taskId) {
+      try {
+        const response = await fetch(`/api/todo/tasks/${taskId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            todoSelectedTask = data.data;
+            // Убеждаемся, что subtasks - массив
+            if (!todoSelectedTask.subtasks) {
+              todoSelectedTask.subtasks = [];
+            }
+            renderTodoTaskDetails();
+            document.getElementById('todo-details').style.display = 'block';
+          }
+        } else {
+          const errorData = await response.json();
+          console.error('Open task details error:', errorData.error || 'Unknown error');
+        }
+      } catch (e) {
+        console.error('Open task details error:', e);
+      }
+    }
+    
+    // Рендеринг деталей задачи
+    function renderTodoTaskDetails() {
+      if (!todoSelectedTask) return;
+      
+      document.getElementById('todo-details-name').value = todoSelectedTask.name || '';
+      document.getElementById('todo-details-completed').checked = todoSelectedTask.completed || false;
+      document.getElementById('todo-details-priority').value = todoSelectedTask.priority || 'normal';
+      document.getElementById('todo-details-due-date').value = todoSelectedTask.due_date ? todoSelectedTask.due_date.split('T')[0] : '';
+      document.getElementById('todo-details-reminder').value = todoSelectedTask.reminder ? new Date(todoSelectedTask.reminder).toISOString().slice(0, 16) : '';
+      document.getElementById('todo-details-repeat').value = todoSelectedTask.repeat || '';
+      document.getElementById('todo-details-notes').value = todoSelectedTask.notes || '';
+      
+      // Отображаем дату создания
+      const createdEl = document.getElementById('todo-details-created');
+      if (todoSelectedTask.created_at) {
+        const createdDate = new Date(todoSelectedTask.created_at);
+        createdEl.textContent = createdDate.toLocaleString('ru-RU', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } else {
+        createdEl.textContent = 'Не указано';
+      }
+      
+      // Рендерим подзадачи
+      renderTodoSubtasks();
+    }
+    
+    // Рендеринг подзадач
+    function renderTodoSubtasks() {
+      const container = document.getElementById('todo-details-subtasks');
+      container.innerHTML = '';
+      
+      if (!todoSelectedTask.subtasks || todoSelectedTask.subtasks.length === 0) {
+        return;
+      }
+      
+      todoSelectedTask.subtasks.forEach(subtask => {
+        const div = document.createElement('div');
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.gap = '8px';
+        div.style.marginBottom = '8px';
+        div.innerHTML = `
+          <input type="checkbox" ${subtask.completed ? 'checked' : ''} onchange="toggleTodoSubtask(${subtask.id}, this.checked)">
+          <input type="text" value="${escapeHtml(subtask.name)}" style="flex: 1; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px;" onchange="updateTodoSubtask(${subtask.id}, this.value)">
+          <button onclick="deleteTodoSubtask(${subtask.id})" style="padding: 4px 8px; background: #ff5b5b; color: white; border: none; border-radius: 4px; cursor: pointer;">×</button>
+        `;
+        container.appendChild(div);
+      });
+    }
+    
+    // Сохранение деталей задачи
+    async function saveTodoTaskDetails() {
+      if (!todoSelectedTask) return;
+      
+      try {
+        const response = await fetch(`/api/todo/tasks/${todoSelectedTask.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: document.getElementById('todo-details-name').value,
+            completed: document.getElementById('todo-details-completed').checked,
+            priority: document.getElementById('todo-details-priority').value,
+            due_date: document.getElementById('todo-details-due-date').value || null,
+            reminder: document.getElementById('todo-details-reminder').value || null,
+            repeat: document.getElementById('todo-details-repeat').value || null,
+            notes: document.getElementById('todo-details-notes').value,
+          }),
+        });
+        
+        if (response.ok) {
+          await loadTodoTasks();
+          await openTodoTaskDetails(todoSelectedTask.id);
+        }
+      } catch (e) {
+        console.error('Save task details error:', e);
+      }
+    }
+    
+    // Удаление задачи
+    async function deleteTodoTask() {
+      if (!todoSelectedTask || !confirm('Удалить задачу?')) return;
+      
+      try {
+        const response = await fetch(`/api/todo/tasks/${todoSelectedTask.id}`, {
+          method: 'DELETE',
+        });
+        
+        if (response.ok) {
+          document.getElementById('todo-details').style.display = 'none';
+          todoSelectedTask = null;
+          await loadTodoTasks();
+        }
+      } catch (e) {
+        console.error('Delete task error:', e);
+      }
+    }
+    
+    // Добавление подзадачи
+    async function addTodoSubtask() {
+      if (!todoSelectedTask) return;
+      
+      const name = prompt('Название подзадачи:');
+      if (!name) return;
+      
+      try {
+        const response = await fetch(`/api/todo/tasks/${todoSelectedTask.id}/subtasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        
+        if (response.ok) {
+          // Обновляем список задач, чтобы подзадача отобразилась
+          await loadTodoTasks();
+          // Обновляем детали задачи
+          await openTodoTaskDetails(todoSelectedTask.id);
+        }
+      } catch (e) {
+        console.error('Add subtask error:', e);
+      }
+    }
+    
+    // Переключение подзадачи
+    async function toggleTodoSubtask(subtaskId, completed) {
+      try {
+        const response = await fetch(`/api/todo/subtasks/${subtaskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ completed }),
+        });
+        
+        if (response.ok) {
+          // Обновляем список задач
+          await loadTodoTasks();
+          // Если открыта детальная панель, обновляем её тоже
+          if (todoSelectedTask) {
+            await openTodoTaskDetails(todoSelectedTask.id);
+          }
+        }
+      } catch (e) {
+        console.error('Toggle subtask error:', e);
+      }
+    }
+    
+    // Обновление подзадачи
+    async function updateTodoSubtask(subtaskId, name) {
+      try {
+        const response = await fetch(`/api/todo/subtasks/${subtaskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        
+        if (response.ok) {
+          await openTodoTaskDetails(todoSelectedTask.id);
+        }
+      } catch (e) {
+        console.error('Update subtask error:', e);
+      }
+    }
+    
+    // Удаление подзадачи
+    async function deleteTodoSubtask(subtaskId) {
+      try {
+        const response = await fetch(`/api/todo/subtasks/${subtaskId}`, {
+          method: 'DELETE',
+        });
+        
+        if (response.ok) {
+          await openTodoTaskDetails(todoSelectedTask.id);
+        }
+      } catch (e) {
+        console.error('Delete subtask error:', e);
+      }
+    }
+    
+    // Фильтрация задач
+    function filterTodoTasks() {
+      // TODO: реализовать фильтрацию
+      renderTodoTasks();
+    }
+    
+    // Показ диалога добавления списка
+    function showAddListDialog() {
+      const name = prompt('Название списка:');
+      if (name) {
+        createTodoList(name);
+      }
+    }
+    
+    // Показ диалога редактирования списка
+    function showEditListDialog(listId) {
+      const list = todoLists.find(l => l.id === listId);
+      if (!list) return;
+      
+      const name = prompt('Название списка:', list.name);
+      if (name && name !== list.name) {
+        updateTodoList(listId, name);
+      }
+    }
+    
+    // Создание списка
+    async function createTodoList(name) {
+      try {
+        const response = await fetch('/api/todo/lists', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            await loadTodo();
+          }
+        }
+      } catch (e) {
+        console.error('Create list error:', e);
+      }
+    }
+    
+    // Обновление списка
+    async function updateTodoList(listId, name) {
+      try {
+        const response = await fetch(`/api/todo/lists/${listId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        
+        if (response.ok) {
+          await loadTodo();
+        }
+      } catch (e) {
+        console.error('Update list error:', e);
+      }
+    }
+    
+    // Вспомогательная функция для экранирования HTML
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    // Добавляем стили для Todo
+    const todoStyles = document.createElement('style');
+    todoStyles.textContent = `
+      .todo-list-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .todo-list-item:hover {
+        background: var(--hover);
+      }
+      .todo-list-item.active {
+        background: var(--primary);
+        color: white;
+      }
+      .todo-list-icon {
+        font-size: 18px;
+      }
+      .todo-list-name {
+        flex: 1;
+        font-size: 14px;
+      }
+      .todo-task-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .todo-task-item:hover {
+        background: var(--hover);
+      }
+      .todo-task-item.completed .todo-task-name {
+        text-decoration: line-through;
+        opacity: 0.6;
+      }
+      .todo-task-name {
+        flex: 1;
+        font-size: 14px;
+      }
+      .todo-task-indicators {
+        display: flex;
+        gap: 8px;
+        font-size: 14px;
+        align-items: center;
+      }
+      .todo-favorite-icon {
+        cursor: pointer;
+        font-size: 18px;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+      }
+      .todo-favorite-icon:hover {
+        opacity: 1;
+      }
+      .todo-task-wrapper {
+        border-bottom: 1px solid var(--border);
+      }
+      .todo-subtasks-container {
+        padding-left: 40px;
+        background: rgba(0, 0, 0, 0.1);
+      }
+      .todo-subtask-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+        opacity: 0.9;
+      }
+      .todo-subtask-item:last-child {
+        border-bottom: none;
+      }
+      .todo-subtask-item:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+      .todo-subtask-item.completed .todo-subtask-name {
+        text-decoration: line-through;
+        opacity: 0.6;
+      }
+      .todo-subtask-name {
+        flex: 1;
+        font-size: 13px;
+      }
+      /* Стилизация чекбоксов */
+      .todo-checkbox {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        border: 2px solid var(--border);
+        background: var(--card);
+        cursor: pointer;
+        appearance: none;
+        -webkit-appearance: none;
+        position: relative;
+        flex-shrink: 0;
+      }
+      .todo-checkbox:checked {
+        background: var(--primary);
+        border-color: var(--primary);
+      }
+      .todo-checkbox:checked::after {
+        content: '✓';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: black;
+        font-size: 14px;
+        font-weight: bold;
+      }
+      .todo-checkbox:hover {
+        border-color: var(--primary);
+      }
+      /* Стили для инпутов и селектов */
+      #todo-search::placeholder,
+      #todo-new-task-input::placeholder {
+        color: rgba(255, 255, 255, 0.5);
+      }
+      #todo-filter-priority {
+        color: black;
+      }
+      #todo-filter-priority option {
+        background: white;
+        color: black;
+      }
+      /* Стили для правой панели деталей задачи */
+      #todo-details {
+        color: white;
+      }
+      #todo-details label {
+        color: rgba(255, 255, 255, 0.7);
+      }
+      #todo-details input[type="text"],
+      #todo-details input[type="date"],
+      #todo-details input[type="datetime-local"],
+      #todo-details select,
+      #todo-details textarea {
+        color: white;
+      }
+      #todo-details input[type="text"]::placeholder,
+      #todo-details textarea::placeholder {
+        color: rgba(255, 255, 255, 0.5);
+      }
+      #todo-details select option {
+        background: var(--card);
+        color: white;
+      }
+      #todo-details span {
+        color: white;
+      }
+    `;
+    document.head.appendChild(todoStyles);
+    
   </script>
 </body>
 </html>

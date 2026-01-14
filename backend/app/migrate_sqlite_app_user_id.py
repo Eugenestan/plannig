@@ -39,6 +39,65 @@ def _app_user_id_expr(cur: sqlite3.Cursor, table: str, alias: str) -> str:
     return "c.app_user_id"
 
 
+def _table_exists(cur: sqlite3.Cursor, table: str) -> bool:
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+    return cur.fetchone() is not None
+
+
+def _ensure_app_users_and_credential_app_user_id(cur: sqlite3.Cursor) -> None:
+    """
+    На очень старых БД может не быть:
+    - таблицы app_users
+    - колонки api_credentials.app_user_id
+
+    Чтобы остальные миграции могли делать JOIN на api_credentials.app_user_id,
+    обеспечиваем наличие и заполняем через jira_email.
+    """
+    # 1) app_users
+    if not _table_exists(cur, "app_users"):
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+    # 2) api_credentials.app_user_id
+    if not _table_exists(cur, "api_credentials"):
+        return
+
+    if not _table_has_column(cur, "api_credentials", "app_user_id"):
+        cur.execute("ALTER TABLE api_credentials ADD COLUMN app_user_id INTEGER NULL")
+
+    # 3) определяем, как называется email колонка в api_credentials
+    email_col = None
+    for candidate in ("jira_email", "email"):
+        if _table_has_column(cur, "api_credentials", candidate):
+            email_col = candidate
+            break
+    if email_col is None:
+        # нечем заполнить — оставим NULL, но следующие миграции тогда ничего не перенесут
+        return
+
+    # 4) заполняем app_users по уникальным email
+    cur.execute(f"INSERT OR IGNORE INTO app_users (email) SELECT DISTINCT {email_col} FROM api_credentials WHERE {email_col} IS NOT NULL AND TRIM({email_col}) <> ''")
+
+    # 5) проставляем api_credentials.app_user_id по email
+    cur.execute(
+        f"""
+        UPDATE api_credentials
+        SET app_user_id = (
+            SELECT au.id FROM app_users au WHERE au.email = api_credentials.{email_col}
+        )
+        WHERE app_user_id IS NULL AND {email_col} IS NOT NULL AND TRIM({email_col}) <> ''
+        """
+    )
+
+
 def _migrate_improve_task_order(cur: sqlite3.Cursor) -> None:
     if not _table_has_column(cur, "improve_task_order", "credential_id"):
         return
@@ -228,6 +287,9 @@ def run(db_path: Path) -> None:
 
         # В SQLite FK могут мешать DROP/RENAME, временно выключаем
         cur.execute("PRAGMA foreign_keys=OFF")
+
+        # На старых БД сначала гарантируем наличие app_users и api_credentials.app_user_id
+        _ensure_app_users_and_credential_app_user_id(cur)
 
         _migrate_improve_task_order(cur)
         _migrate_gantt_state(cur)

@@ -27,6 +27,18 @@ def _table_has_column(cur: sqlite3.Cursor, table: str, column: str) -> bool:
     return any(row[1] == column for row in cur.fetchall())
 
 
+def _app_user_id_expr(cur: sqlite3.Cursor, table: str, alias: str) -> str:
+    """
+    SQLite миграции могут выполняться на БД разных версий:
+    - в некоторых таблицах уже есть колонка app_user_id (nullable) после частичных миграций
+    - в некоторых её ещё нет (только credential_id)
+    Возвращаем SQL-выражение, которое безопасно вычисляет app_user_id.
+    """
+    if _table_has_column(cur, table, "app_user_id"):
+        return f"COALESCE({alias}.app_user_id, c.app_user_id)"
+    return "c.app_user_id"
+
+
 def _migrate_improve_task_order(cur: sqlite3.Cursor) -> None:
     if not _table_has_column(cur, "improve_task_order", "credential_id"):
         return
@@ -46,20 +58,22 @@ def _migrate_improve_task_order(cur: sqlite3.Cursor) -> None:
     )
 
     # переносим данные, сохраняя id
+    app_user_expr = _app_user_id_expr(cur, "improve_task_order", "o")
     cur.execute(
         """
         INSERT OR IGNORE INTO improve_task_order_new (id, app_user_id, task_key, position, created_at, updated_at)
         SELECT
             o.id,
-            COALESCE(o.app_user_id, c.app_user_id) AS app_user_id,
+            {app_user_expr} AS app_user_id,
             o.task_key,
             o.position,
             o.created_at,
             o.updated_at
         FROM improve_task_order o
         LEFT JOIN api_credentials c ON c.id = o.credential_id
-        WHERE COALESCE(o.app_user_id, c.app_user_id) IS NOT NULL
+        WHERE {app_user_expr} IS NOT NULL
         """
+        .format(app_user_expr=app_user_expr)
     )
 
     cur.execute("DROP TABLE improve_task_order")
@@ -85,12 +99,13 @@ def _migrate_gantt_state(cur: sqlite3.Cursor) -> None:
         """
     )
 
+    app_user_expr = _app_user_id_expr(cur, "gantt_state", "s")
     cur.execute(
         """
         INSERT OR IGNORE INTO gantt_state_new (id, app_user_id, team_id, state_data, auto_mode, created_at, updated_at)
         SELECT
             s.id,
-            COALESCE(s.app_user_id, c.app_user_id) AS app_user_id,
+            {app_user_expr} AS app_user_id,
             s.team_id,
             s.state_data,
             s.auto_mode,
@@ -98,8 +113,9 @@ def _migrate_gantt_state(cur: sqlite3.Cursor) -> None:
             s.updated_at
         FROM gantt_state s
         LEFT JOIN api_credentials c ON c.id = s.credential_id
-        WHERE COALESCE(s.app_user_id, c.app_user_id) IS NOT NULL
+        WHERE {app_user_expr} IS NOT NULL
         """
+        .format(app_user_expr=app_user_expr)
     )
 
     cur.execute("DROP TABLE gantt_state")
@@ -123,20 +139,22 @@ def _migrate_todo_lists(cur: sqlite3.Cursor) -> None:
         """
     )
 
+    app_user_expr = _app_user_id_expr(cur, "todo_lists", "l")
     cur.execute(
         """
         INSERT OR IGNORE INTO todo_lists_new (id, app_user_id, name, position, created_at, updated_at)
         SELECT
             l.id,
-            COALESCE(l.app_user_id, c.app_user_id) AS app_user_id,
+            {app_user_expr} AS app_user_id,
             l.name,
             l.position,
             l.created_at,
             l.updated_at
         FROM todo_lists l
         LEFT JOIN api_credentials c ON c.id = l.credential_id
-        WHERE COALESCE(l.app_user_id, c.app_user_id) IS NOT NULL
+        WHERE {app_user_expr} IS NOT NULL
         """
+        .format(app_user_expr=app_user_expr)
     )
 
     cur.execute("DROP TABLE todo_lists")
@@ -168,6 +186,7 @@ def _migrate_todo_tasks(cur: sqlite3.Cursor) -> None:
         """
     )
 
+    app_user_expr = _app_user_id_expr(cur, "todo_tasks", "t")
     cur.execute(
         """
         INSERT OR IGNORE INTO todo_tasks_new (
@@ -175,7 +194,7 @@ def _migrate_todo_tasks(cur: sqlite3.Cursor) -> None:
         )
         SELECT
             t.id,
-            COALESCE(t.app_user_id, c.app_user_id) AS app_user_id,
+            {app_user_expr} AS app_user_id,
             t.list_id,
             t.list_type,
             t.name,
@@ -190,8 +209,9 @@ def _migrate_todo_tasks(cur: sqlite3.Cursor) -> None:
             t.updated_at
         FROM todo_tasks t
         LEFT JOIN api_credentials c ON c.id = t.credential_id
-        WHERE COALESCE(t.app_user_id, c.app_user_id) IS NOT NULL
+        WHERE {app_user_expr} IS NOT NULL
         """
+        .format(app_user_expr=app_user_expr)
     )
 
     cur.execute("DROP TABLE todo_tasks")

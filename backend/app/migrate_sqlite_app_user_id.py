@@ -70,6 +70,28 @@ def _ensure_app_users_and_credential_app_user_id(cur: sqlite3.Cursor) -> None:
     if not _table_exists(cur, "api_credentials"):
         return
 
+    # На некоторых старых БД колонка называется email/api_key, а не jira_email/jira_api_key.
+    # Приводим к ожидаемой схемой приложения (чтобы ORM не падал на SELECT).
+    if not _table_has_column(cur, "api_credentials", "jira_email"):
+        if _table_has_column(cur, "api_credentials", "email"):
+            cur.execute("ALTER TABLE api_credentials ADD COLUMN jira_email TEXT NULL")
+            cur.execute("UPDATE api_credentials SET jira_email = email WHERE jira_email IS NULL AND email IS NOT NULL")
+        else:
+            cur.execute("ALTER TABLE api_credentials ADD COLUMN jira_email TEXT NULL")
+
+    if not _table_has_column(cur, "api_credentials", "jira_api_key"):
+        if _table_has_column(cur, "api_credentials", "api_key"):
+            cur.execute("ALTER TABLE api_credentials ADD COLUMN jira_api_key TEXT NULL")
+            cur.execute("UPDATE api_credentials SET jira_api_key = api_key WHERE jira_api_key IS NULL AND api_key IS NOT NULL")
+        else:
+            cur.execute("ALTER TABLE api_credentials ADD COLUMN jira_api_key TEXT NULL")
+
+    # created_at/updated_at тоже используются ORM-моделью — добавим, если их нет
+    if not _table_has_column(cur, "api_credentials", "created_at"):
+        cur.execute("ALTER TABLE api_credentials ADD COLUMN created_at DATETIME NULL")
+    if not _table_has_column(cur, "api_credentials", "updated_at"):
+        cur.execute("ALTER TABLE api_credentials ADD COLUMN updated_at DATETIME NULL")
+
     if not _table_has_column(cur, "api_credentials", "app_user_id"):
         cur.execute("ALTER TABLE api_credentials ADD COLUMN app_user_id INTEGER NULL")
 

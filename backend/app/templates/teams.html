@@ -14,6 +14,7 @@
         <p class="muted">Выберите команду, чтобы назначить сотрудников и перейти к следующему шагу.</p>
       </div>
       <div style="display: flex; gap: 10px;">
+        <button class="button" type="button" onclick="openCreateTeamModal()">Создать свою команду</button>
         <form method="post" action="/sync">
           <button class="button" type="submit">Синхронизировать из Jira</button>
         </form>
@@ -39,7 +40,7 @@
     {% else %}
       <div class="grid">
         {% for t in teams %}
-          <a class="card link-card" href="/teams/{{ t.id }}">
+          <a class="card link-card" href="/teams/{{ t.id }}{% if t.is_custom %}?custom=1{% endif %}">
             <div class="card-title">{{ t.name }}</div>
             <div class="muted">ID: {{ t.id }}</div>
           </a>
@@ -47,6 +48,74 @@
       </div>
     {% endif %}
   </div>
+
+  <!-- Модалка создания команды -->
+  <div id="createTeamModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 500px; width: 90%; margin: 20px;">
+      <h2 style="margin-top: 0;">Создание команды</h2>
+      <form id="createTeamForm" onsubmit="createCustomTeam(event)">
+        <div style="margin-bottom: 15px;">
+          <label for="teamName" style="display: block; margin-bottom: 5px; font-weight: 500;">Название команды (до 30 символов):</label>
+          <input type="text" id="teamName" name="name" maxlength="30" required 
+                 class="input" style="width: 100%;" 
+                 placeholder="Введите название команды">
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button type="button" class="button" onclick="closeCreateTeamModal()">Отмена</button>
+          <button type="submit" class="button primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    function openCreateTeamModal() {
+      document.getElementById('createTeamModal').style.display = 'flex';
+      document.getElementById('teamName').focus();
+    }
+
+    function closeCreateTeamModal() {
+      document.getElementById('createTeamModal').style.display = 'none';
+      document.getElementById('createTeamForm').reset();
+    }
+
+    async function createCustomTeam(event) {
+      event.preventDefault();
+      const name = document.getElementById('teamName').value.trim();
+      if (!name || name.length > 30) {
+        alert('Название команды должно быть от 1 до 30 символов');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/custom-teams', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ name: name })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+          closeCreateTeamModal();
+          location.reload(); // Перезагружаем страницу для отображения новой команды
+        } else {
+          alert('Ошибка: ' + (data.error || 'Не удалось создать команду'));
+        }
+      } catch (error) {
+        console.error('Error creating team:', error);
+        alert('Ошибка при создании команды');
+      }
+    }
+
+    // Закрытие модалки при клике вне её
+    document.getElementById('createTeamModal').addEventListener('click', function(e) {
+      if (e.target === this) {
+        closeCreateTeamModal();
+      }
+    });
+  </script>
 </body>
 </html>
 

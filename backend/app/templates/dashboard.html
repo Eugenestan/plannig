@@ -429,7 +429,7 @@
 
   <script>
     const days = {{ days|tojson }};
-    const teamId = {{ team.id }};
+    const teamId = {{ team.id }}; const isCustom = {{ "true" if is_custom else "false" }};
     
     async function loadWorklog() {
       const loading = document.getElementById('worklog-loading');
@@ -443,7 +443,7 @@
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
         let response;
         try {
-          response = await fetch(`/api/teams/${teamId}/worklog?days=${days}`, {
+          response = await fetch(`/api/teams/${teamId}/worklog?days=${days}${isCustom ? "&custom=1" : ""}`, {
             signal: controller.signal
           });
           clearTimeout(timeoutId);
@@ -585,7 +585,7 @@
                     <div style="display: flex; justify-content: space-between;">
                       <div>
                         <strong>${escapeHtml(entry.issue_key)}</strong>: ${escapeHtml((entry.issue_summary || '').substring(0, 60))}${(entry.issue_summary || '').length > 60 ? '...' : ''}
-                        ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(entry.comment.substring(0, 100))}${entry.comment.length > 100 ? '...' : ''}</div>` : ''}
+                        ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(String(entry.comment).substring(0, 100))}${String(entry.comment).length > 100 ? '...' : ''}</div>` : ''}
                       </div>
                       <div style="text-align: right; margin-left: 12px;">
                         <div>${escapeHtml(entry.time_spent || '')}</div>
@@ -604,7 +604,7 @@
             <div style="display: flex; justify-content: space-between;">
               <div>
                 <strong>${escapeHtml(entry.issue_key)}</strong>: ${escapeHtml((entry.issue_summary || '').substring(0, 60))}${(entry.issue_summary || '').length > 60 ? '...' : ''}
-                ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(entry.comment.substring(0, 100))}${entry.comment.length > 100 ? '...' : ''}</div>` : ''}
+                ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(String(entry.comment).substring(0, 100))}${String(entry.comment).length > 100 ? '...' : ''}</div>` : ''}
               </div>
               <div style="text-align: right; margin-left: 12px;">
                 <div>${escapeHtml(entry.time_spent || '')}</div>
@@ -701,7 +701,7 @@
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
-        const response = await fetch(`/api/teams/${teamId}/epics`, {
+        const response = await fetch(`/api/teams/${teamId}/epics${isCustom ? "?custom=1" : ""}`, {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -866,7 +866,7 @@
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
-        const response = await fetch(`/api/teams/${teamId}/releases`, {
+        const response = await fetch(`/api/teams/${teamId}/releases${isCustom ? "?custom=1" : ""}`, {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -1127,7 +1127,7 @@
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд
-        const response = await fetch(`/api/teams/${teamId}/users`, {
+        const response = await fetch(`/api/teams/${teamId}/users${isCustom ? "?custom=1" : ""}`, {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -1246,11 +1246,11 @@
         let url;
         if (filterType === 'done') {
           const period = periodSelect ? periodSelect.value : 'today';
-          url = `/api/teams/${teamId}/done?user_id=${encodeURIComponent(userId)}&period=${period}`;
+          url = `/api/teams/${teamId}/done?user_id=${encodeURIComponent(userId)}&period=${period}${isCustom ? "&custom=1" : ""}`;
         } else {
           url = userId 
-            ? `/api/teams/${teamId}/no-release?user_id=${encodeURIComponent(userId)}`
-            : `/api/teams/${teamId}/no-release`;
+            ? `/api/teams/${teamId}/no-release?user_id=${encodeURIComponent(userId)}${isCustom ? "&custom=1" : ""}`
+            : `/api/teams/${teamId}/no-release${isCustom ? "?custom=1" : ""}`;
         }
         
         const response = await fetch(url, {
@@ -1364,7 +1364,7 @@
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 минуты
-        const response = await fetch(`/api/teams/${teamId}/improve`, {
+        const response = await fetch(`/api/teams/${teamId}/improve${isCustom ? "?custom=1" : ""}`, {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -1526,7 +1526,7 @@
       if (taskKeys.length === 0) return;
       
       try {
-        const response = await fetch(`/api/teams/${teamId}/improve/order`, {
+        const response = await fetch(`/api/teams/${teamId}/improve/order${isCustom ? "?custom=1" : ""}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1619,7 +1619,7 @@
       content.style.display = 'none';
       
       try {
-        const response = await fetch(`/api/teams/${teamId}/gantt`);
+        const response = await fetch(`/api/teams/${teamId}/gantt${isCustom ? "?custom=1" : ""}`);
         
         // Проверяем статус ответа перед парсингом JSON
         if (!response.ok) {
@@ -2345,7 +2345,13 @@
         // Добавляем в очередь в порядке получения (сохраняем исходный порядок)
         queue.push(...filtered);
       }
-      
+
+      // Если не смогли отфильтровать (например, backend не прислал type/components),
+      // не ломаем авто-планирование — просто возвращаем исходный порядок тикетов.
+      if (queue.length === 0) {
+        return tickets || [];
+      }
+
       return queue;
     }
     
@@ -2360,7 +2366,24 @@
     
     // Автоматическое распределение задач
     function autoDistributeTasks() {
-      if (!ganttData) return;
+      try {
+        if (!ganttData) {
+          console.warn('Gantt: no data loaded yet');
+          return;
+        }
+        
+        // Гарантируем, что состояние инициализировано (иначе кнопка может "ничего не делать" из-за JS ошибки)
+        if (!ganttState) {
+          ganttState = { tasks: {}, connections: [] };
+        }
+        if (!ganttState.tasks) {
+          ganttState.tasks = {};
+        }
+        
+        // Для удобства сразу разворачиваем эпики, чтобы было видно полосы
+        ganttData.forEach(epic => {
+          ganttExpandedEpics[String(epic.id)] = true;
+        });
       
       // Сортируем эпики по приоритету (DESC - выше приоритет раньше)
       // Если приоритет одинаковый, то по суммарной оценке (меньшая оценка раньше)
@@ -2378,11 +2401,6 @@
         const bTotalEstimate = calculateEpicTotalEstimate(b);
         return aTotalEstimate - bTotalEstimate;
       });
-      
-      // Инициализируем состояние задач
-      if (!ganttState.tasks) {
-        ganttState.tasks = {};
-      }
       
       // Календари занятости исполнителей: { assigneeId: [{ start: dateIndex, end: dateIndex }] }
       const assigneeCalendars = {};
@@ -2475,6 +2493,14 @@
       setTimeout(() => {
         renderGanttConnections();
       }, 100);
+      } catch (e) {
+        console.error('Ошибка autoDistributeTasks:', e);
+        const error = document.getElementById('gantt-error');
+        if (error) {
+          error.style.display = 'block';
+          error.innerHTML = `Ошибка авто-распределения: ${e && e.message ? e.message : e}`;
+        }
+      }
     }
     
     // Убрать автоматическое распределение
@@ -2494,7 +2520,7 @@
     // Сохранение состояния
     async function saveGanttState() {
       try {
-        const response = await fetch(`/api/teams/${teamId}/gantt/state`, {
+        const response = await fetch(`/api/teams/${teamId}/gantt/state${isCustom ? "?custom=1" : ""}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -2520,7 +2546,7 @@
     // Загрузка состояния
     async function loadGanttState() {
       try {
-        const response = await fetch(`/api/teams/${teamId}/gantt/state`);
+        const response = await fetch(`/api/teams/${teamId}/gantt/state${isCustom ? "?custom=1" : ""}`);
         const result = await response.json();
         
         if (result.success && result.data) {
@@ -2539,6 +2565,7 @@
         console.error('Ошибка загрузки состояния:', e);
         ganttState = { tasks: {}, connections: [] };
         ganttAutoMode = false;
+        ganttExpandedEpics = {};
       }
     }
     // ==================== TODO ====================

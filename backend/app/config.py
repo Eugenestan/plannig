@@ -4,7 +4,15 @@ from pathlib import Path
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # В этом проекте .env может быть заблокирован глобальными ignore-настройками,
+    # а сервер иногда запускают не из папки backend/. Поэтому указываем env_file
+    # абсолютными путями относительно backend/ — так config.env гарантированно подхватится.
+    _backend_dir = Path(__file__).resolve().parent.parent
+    model_config = SettingsConfigDict(
+        env_file=(str(_backend_dir / ".env"), str(_backend_dir / "config.env")),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # SQLite по умолчанию (для быстрого старта без Docker/MySQL)
     # Чтобы использовать MySQL, задайте USE_MYSQL=true в .env
@@ -18,6 +26,17 @@ class Settings(BaseSettings):
 
     jira_secrets_file: str = "../jira_secrets.env"
     session_secret_key: str = "change-this-secret-key-in-production"
+
+    # DevSamurai Timesheet Builder (TimePlanner) — для учета logtimeType=custom_task/Event и т.п.
+    # ВАЖНО: JWT короткоживущий. Лучше хранить и обновлять через .env при необходимости.
+    devsamurai_timesheet_base_url: str = "https://www.timesheet.atlas.devsamurai.com"
+    devsamurai_timesheet_jwt: str = ""
+
+    # Teamboard Public API (TimePlanner timelogs)
+    # Документация: `https://api-docs.teamboard.cloud/v1/`
+    # ВАЖНО: здесь нужен именно Bearer JWT токен (не UUID "API key").
+    teamboard_base_url: str = "https://api.teamboard.cloud/v1"
+    teamboard_bearer_jwt: str = ""
 
     @property
     def jira_secrets_file_abs(self) -> str:

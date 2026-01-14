@@ -15,15 +15,19 @@ MVP поток:
 ### 1) Настройка env для бэка
 
 Из-за ограничений окружения шаблон лежит в `backend/config.example.env`.  
-Создайте файл `backend/.env` и скопируйте туда содержимое (можно оставить как есть).
+Создайте файл `backend/config.env` и скопируйте туда содержимое (можно оставить как есть).
 
 Также убедитесь, что `jira_secrets.env` заполнен (лежит в корне проекта).
 
 ### 2) Установка и запуск бэка
 
 ```powershell
-cd C:\Users\Steve\planing\backend
+cd C:\Users\Steve\planing\plannig\backend
 py -m pip install -r .\requirements.txt
+
+# (Важно) Одноразовая миграция SQLite после перехода на app_user_id
+python -m app.migrate_sqlite_app_user_id
+
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -35,11 +39,11 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 1) Поднимите MySQL (Docker):
 ```powershell
-cd C:\Users\Steve\planing\backend
+cd C:\Users\Steve\planing\plannig\backend
 docker compose up -d
 ```
 
-2) В `backend/.env` раскомментируйте:
+2) В `backend/config.env` раскомментируйте:
 ```
 USE_MYSQL=true
 MYSQL_HOST=127.0.0.1

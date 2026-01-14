@@ -2,6 +2,7 @@
 jira_secrets.env
 .env
 backend/.env
+backend/config.env
 
 # Python
 __pycache__/

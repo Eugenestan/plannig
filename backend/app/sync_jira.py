@@ -9,6 +9,70 @@ from .jira_client import Jira, extract_team_values, find_field_id, normalize_use
 from .models import CredentialTeam, CredentialUser, Team, TeamMember, User
 
 
+def sync_all_jira_users(jira: Jira, api_prefix: str, db: Session) -> int:
+    """
+    Синхронизирует всех пользователей Jira через API /users/search.
+    Возвращает количество созданных/обновленных пользователей.
+    """
+    created_count = 0
+    start_at = 0
+    max_results = 50  # Jira API ограничение
+    
+    while True:
+        # Используем /users/search для получения всех пользователей
+        params = {
+            "startAt": start_at,
+            "maxResults": max_results
+        }
+        r = jira.request("GET", f"{api_prefix}/users/search", params=params)
+        
+        if r.status_code != 200:
+            # Если endpoint не поддерживается, пробуем альтернативный способ
+            if r.status_code == 404:
+                # Пробуем получить пользователей через /users
+                r = jira.request("GET", f"{api_prefix}/users", params=params)
+                if r.status_code != 200:
+                    print(f"Warning: Cannot fetch users via /users/search or /users: HTTP {r.status_code}")
+                    break
+            else:
+                print(f"Warning: Cannot fetch users: HTTP {r.status_code}")
+                break
+        
+        users_data = r.json()
+        if not users_data or not isinstance(users_data, list):
+            break
+        
+        for user_data in users_data:
+            nu = normalize_user(user_data)
+            if not nu:
+                continue
+            
+            user = db.scalar(select(User).where(User.jira_account_id == nu["accountId"]))
+            if user is None:
+                user = User(
+                    jira_account_id=nu["accountId"],
+                    display_name=nu["displayName"] or nu["accountId"],
+                    email=nu.get("email"),
+                    active=bool(nu.get("active", True)),
+                )
+                db.add(user)
+                created_count += 1
+            else:
+                # Обновляем данные пользователя
+                user.display_name = nu["displayName"] or user.display_name
+                if nu.get("email"):
+                    user.email = nu.get("email")
+                user.active = bool(nu.get("active", True))
+        
+        if len(users_data) < max_results:
+            break
+        
+        start_at += max_results
+    
+    db.flush()
+    return created_count
+
+
 def sync_from_jira_for_credential(
     db: Session,
     *,
@@ -18,12 +82,13 @@ def sync_from_jira_for_credential(
     team_field_name: str = "TEAM",
     user_fields: List[str] | None = None,
     clear_existing_links: bool = True,
+    sync_all_users: bool = True,  # Новый параметр для синхронизации всех пользователей
 ) -> Dict[str, int]:
     """
     Подтягивает команды и пользователей из Jira по задачам, где TEAM не пустой,
     и привязывает доступ к ним к конкретному credential.
     - upsert teams
-    - upsert users
+    - upsert users (из задач + все пользователи Jira, если sync_all_users=True)
     - upsert team_members (связь)
     - upsert credential_teams / credential_users (изоляция пользователей)
     """
@@ -41,7 +106,13 @@ def sync_from_jira_for_credential(
         team_field_id = find_field_id(fields, team_field_name)
     except RuntimeError:
         # Поле TEAM не найдено - это нормально, не все Jira инстансы имеют это поле
-        # Возвращаем пустой результат синхронизации
+        # Но если sync_all_users=True, все равно синхронизируем пользователей
+        if sync_all_users:
+            try:
+                users_count = sync_all_jira_users(jira, api_prefix, db)
+                print(f"Synced {users_count} users from Jira API")
+            except Exception as e:
+                print(f"Warning: Failed to sync all users: {e}")
         return {"teams_created": 0, "users_created": 0, "links_created": 0}
 
     jql = f'"{team_field_id}" is not EMPTY'
@@ -150,6 +221,15 @@ def sync_from_jira_for_credential(
         if not next_token:
             break
 
+    # Синхронизируем всех пользователей Jira, если включено
+    if sync_all_users:
+        try:
+            users_count = sync_all_jira_users(jira, api_prefix, db)
+            print(f"Synced {users_count} additional users from Jira API")
+            created_users += users_count
+        except Exception as e:
+            print(f"Warning: Failed to sync all users: {e}")
+
     db.commit()
     return {"teams_created": created_teams, "users_created": created_users, "links_created": created_links}
 
@@ -174,5 +254,3 @@ def credential_has_any_team(
         if teams:
             return True
     return False
-
-

@@ -56,6 +56,21 @@ def _comment_to_text(comment) -> str:
     except Exception:
         return ""
 
+def _coerce_issue_id(value) -> int | None:
+    """
+    Приводит issueId к int, если Jira/интеграции вернули его строкой.
+    """
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if s.isdigit():
+            try:
+                return int(s)
+            except Exception:
+                return None
+    return None
+
 
 def get_team_worklog(
     db: Session,
@@ -368,8 +383,8 @@ def get_team_worklog(
             if wl_dt.date() < start_date.date() or wl_dt.date() > end_date.date():
                 continue
 
-            issue_id = wl.get("issueId")
-            if isinstance(issue_id, int):
+            issue_id = _coerce_issue_id(wl.get("issueId"))
+            if issue_id is not None:
                 issue_ids.add(issue_id)
 
             normalized.append({
@@ -379,7 +394,7 @@ def get_team_worklog(
                 "time_spent_seconds": int(wl.get("timeSpentSeconds") or 0),
                 "time_spent": wl.get("timeSpent") or "",
                 "comment": _comment_to_text(wl.get("comment")),
-                "issue_id": issue_id if isinstance(issue_id, int) else None,
+                "issue_id": issue_id,
             })
 
         issue_meta: Dict[int, tuple[str, str]] = {}
@@ -631,9 +646,9 @@ def get_team_worklog(
             if seconds <= 0:
                 continue
 
-            issue_id = tl.get("issueId")
+            issue_id = _coerce_issue_id(tl.get("issueId"))
             # issue_id здесь всегда None (см. фильтр выше), оставляем для будущей совместимости
-            if isinstance(issue_id, int):
+            if issue_id is not None:
                 issue_ids.add(issue_id)
 
             normalized_tb.append({
@@ -643,7 +658,7 @@ def get_team_worklog(
                 "type": (tl.get("type") or "").strip(),
                 "notes": (tl.get("notes") or "").strip(),
                 "summary": (tl.get("summary") or "").strip() if isinstance(tl.get("summary"), str) else "",
-                "issue_id": issue_id if isinstance(issue_id, int) else None,
+                "issue_id": issue_id,
                 "started": ((tl.get("info") or {}) if isinstance(tl.get("info"), dict) else {}).get("started"),
             })
             included_events += 1

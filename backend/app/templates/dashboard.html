@@ -428,8 +428,10 @@
     </div>
 
   <script>
-    const days = {{ days|tojson }};
-    const teamId = {{ team.id }}; const isCustom = {{ "true" if is_custom else "false" }};
+    // Значения из Jinja оборачиваем в строки, чтобы линтер JS не ломался на "{ { ... } }"
+    const days = JSON.parse('{{ days|tojson }}');
+    const teamId = Number('{{ team.id }}');
+    const isCustom = ('{{ "true" if is_custom else "false" }}' === 'true');
     
     async function loadWorklog() {
       const loading = document.getElementById('worklog-loading');
@@ -546,6 +548,26 @@
       }
       return dateStr;
     }
+
+    function renderWorklogTitle(entry) {
+      const key = String(entry.issue_key || '').trim();
+      const summary = String(entry.issue_summary || '').trim();
+      const title = summary.substring(0, 60) + (summary.length > 60 ? '...' : '');
+
+      if (key) {
+        // Jira task: clickable key + title
+        const href = 'https://topntop.atlassian.net/browse/' + escapeHtml(key);
+        const keyHtml =
+          '<a href="' + href + '" target="_blank" ' +
+          'style="color: var(--primary); text-decoration: none; font-weight: 700;">' +
+          escapeHtml(key) +
+          '</a>';
+        return keyHtml + (title ? (': ' + escapeHtml(title)) : '');
+      }
+
+      // TimePlanner event: just name (no colon, no empty key)
+      return escapeHtml(title || summary || '');
+    }
     
     function formatEntries(entries, period) {
       // Если период "8 дней", группируем по датам
@@ -584,7 +606,7 @@
                   <div style="padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
                     <div style="display: flex; justify-content: space-between;">
                       <div>
-                        <strong>${escapeHtml(entry.issue_key)}</strong>: ${escapeHtml((entry.issue_summary || '').substring(0, 60))}${(entry.issue_summary || '').length > 60 ? '...' : ''}
+                        ${renderWorklogTitle(entry)}
                         ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(String(entry.comment).substring(0, 100))}${String(entry.comment).length > 100 ? '...' : ''}</div>` : ''}
                       </div>
                       <div style="text-align: right; margin-left: 12px;">
@@ -603,7 +625,7 @@
           <div style="padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
             <div style="display: flex; justify-content: space-between;">
               <div>
-                <strong>${escapeHtml(entry.issue_key)}</strong>: ${escapeHtml((entry.issue_summary || '').substring(0, 60))}${(entry.issue_summary || '').length > 60 ? '...' : ''}
+                ${renderWorklogTitle(entry)}
                 ${entry.comment ? `<div class="muted" style="margin-top: 4px; font-size: 11px;">${escapeHtml(String(entry.comment).substring(0, 100))}${String(entry.comment).length > 100 ? '...' : ''}</div>` : ''}
               </div>
               <div style="text-align: right; margin-left: 12px;">
@@ -3271,6 +3293,460 @@
     `;
     document.head.appendChild(todoStyles);
     
+  </script>
+
+  <!-- Кнопка "Создать задачу" -->
+  <button id="fab-create-issue" class="fab-button" onclick="openCreateIssueModal()" title="Создать задачу в Jira" style="position: fixed; top: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; background: var(--primary); color: white; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(91, 140, 255, 0.4); display: flex; align-items: center; justify-content: center; gap: 8px; z-index: 1000; transition: all 0.3s ease; font-weight: 600; font-size: 14px; white-space: nowrap;">
+    <span style="font-size: 18px; line-height: 1;">+</span>
+    <span>Создать задачу</span>
+  </button>
+
+  <!-- Модальное окно создания задачи -->
+  <div id="create-issue-modal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.7); align-items: center; justify-content: center; z-index: 2000; padding: 20px; backdrop-filter: blur(4px);">
+    <div class="modal-content" style="max-width: 600px; max-height: 90vh; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); color: var(--text);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Создать задачу в Jira</h2>
+        <button onclick="closeCreateIssueModal()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted);">&times;</button>
+      </div>
+
+      <!-- Переключатель режимов -->
+      <div style="margin-bottom: 20px; display: flex; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 10px;">
+        <label style="display: flex; align-items: center; cursor: pointer;">
+          <input type="radio" name="create-mode" value="text" checked onchange="switchCreateMode('text')" style="margin-right: 8px;">
+          <span>Текст</span>
+        </label>
+        <label style="display: flex; align-items: center; cursor: pointer;">
+          <input type="radio" name="create-mode" value="voice" onchange="switchCreateMode('voice')" style="margin-right: 8px;">
+          <span>Голос</span>
+        </label>
+      </div>
+
+      <!-- Голосовой режим -->
+      <div id="voice-mode" style="display: none; margin-bottom: 20px;">
+        <div style="text-align: center; padding: 20px; border: 2px dashed var(--border); border-radius: 8px; margin-bottom: 15px;">
+          <button id="voice-record-btn" onclick="startVoiceRecognition()" style="padding: 12px 24px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin-bottom: 10px;">
+            🎤 Начать запись
+          </button>
+          <div id="voice-status" style="color: var(--muted); font-size: 14px; margin-top: 10px;"></div>
+          <div id="voice-recording-indicator" style="display: none; margin-top: 10px;">
+            <div class="voice-recording" style="display: inline-block; width: 12px; height: 12px; background: #ff5b5b; border-radius: 50%; animation: pulse 1.5s infinite;"></div>
+            <span style="margin-left: 8px; color: #ff5b5b;">Идет запись...</span>
+          </div>
+        </div>
+        <div id="voice-preview" style="display: none; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px; margin-bottom: 15px;">
+          <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">Распознанный текст:</div>
+          <div id="voice-preview-text" style="color: white; white-space: pre-wrap;"></div>
+        </div>
+      </div>
+
+      <!-- Форма создания задачи -->
+      <form id="create-issue-form" onsubmit="event.preventDefault(); createJiraIssue();">
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">Проект *</label>
+          <select id="issue-project" required style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;">
+            <option value="">Загрузка...</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">Тип задачи *</label>
+          <select id="issue-type" required style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;">
+            <option value="Task">Задача</option>
+            <option value="Bug">Баг</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">Заголовок *</label>
+          <input type="text" id="issue-summary" required placeholder="Введите заголовок задачи" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white; box-sizing: border-box;">
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">Описание</label>
+          <textarea id="issue-description" rows="4" placeholder="Введите описание задачи" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white; resize: vertical; box-sizing: border-box; font-family: inherit;"></textarea>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">Приоритет</label>
+          <select id="issue-priority" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white;">
+            <option value="">Не указан</option>
+            <option value="Highest">Highest</option>
+            <option value="High">High</option>
+            <option value="Medium" selected>Medium</option>
+            <option value="Low">Low</option>
+            <option value="Lowest">Lowest</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; margin-bottom: 6px; font-weight: 600;">Родительская задача</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="issue-parent" placeholder="Введите ключ задачи (например, TNL-123) или название" style="flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: white; box-sizing: border-box;">
+            <button type="button" onclick="searchParentIssue()" style="padding: 10px 16px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer;">Найти</button>
+          </div>
+          <div id="parent-search-results" style="margin-top: 8px; display: none; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--card);"></div>
+        </div>
+
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button type="button" onclick="closeCreateIssueModal()" style="padding: 10px 20px; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">Отмена</button>
+          <button type="submit" id="create-issue-submit" style="padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Создать задачу</button>
+        </div>
+
+        <div id="create-issue-loading" style="display: none; text-align: center; margin-top: 16px; color: var(--muted);">
+          Создание задачи...
+        </div>
+        <div id="create-issue-error" style="display: none; margin-top: 16px; padding: 12px; background: rgba(255, 91, 91, 0.1); border: 1px solid #ff5b5b; border-radius: 6px; color: #ff5b5b;"></div>
+        <div id="create-issue-success" style="display: none; margin-top: 16px; padding: 12px; background: rgba(76, 175, 80, 0.1); border: 1px solid #4caf50; border-radius: 6px; color: #4caf50;"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Функции для создания задачи в Jira
+    
+    function openCreateIssueModal() {
+      const modal = document.getElementById('create-issue-modal');
+      // Устанавливаем все необходимые стили для правильного отображения модального окна
+      modal.style.display = 'flex';
+      modal.style.position = 'fixed';
+      modal.style.top = '0';
+      modal.style.left = '0';
+      modal.style.right = '0';
+      modal.style.bottom = '0';
+      modal.style.background = 'rgba(0, 0, 0, 0.7)';
+      modal.style.alignItems = 'center';
+      modal.style.justifyContent = 'center';
+      modal.style.zIndex = '2000';
+      modal.style.padding = '20px';
+      modal.style.backdropFilter = 'blur(4px)';
+      
+      loadJiraProjects();
+      // Сброс формы
+      document.getElementById('create-issue-form').reset();
+      document.getElementById('create-issue-error').style.display = 'none';
+      document.getElementById('create-issue-success').style.display = 'none';
+      document.getElementById('parent-search-results').style.display = 'none';
+      document.getElementById('voice-preview').style.display = 'none';
+      switchCreateMode('text');
+    }
+
+    function closeCreateIssueModal() {
+      const modal = document.getElementById('create-issue-modal');
+      modal.style.display = 'none';
+      stopVoiceRecognition();
+    }
+
+    function switchCreateMode(mode) {
+      const voiceMode = document.getElementById('voice-mode');
+      if (mode === 'voice') {
+        voiceMode.style.display = 'block';
+      } else {
+        voiceMode.style.display = 'none';
+        stopVoiceRecognition();
+      }
+    }
+
+    async function loadJiraProjects() {
+      const select = document.getElementById('issue-project');
+      select.innerHTML = '<option value="">Загрузка...</option>';
+      
+      try {
+        const response = await fetch('/api/jira/projects');
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+          select.innerHTML = '<option value="">Выберите проект</option>';
+          result.data.forEach(project => {
+            const option = document.createElement('option');
+            option.value = project.key;
+            option.textContent = `${project.key} - ${project.name}`;
+            select.appendChild(option);
+          });
+        } else {
+          select.innerHTML = '<option value="">Ошибка загрузки проектов</option>';
+        }
+      } catch (e) {
+        console.error('Load projects error:', e);
+        select.innerHTML = '<option value="">Ошибка загрузки проектов</option>';
+      }
+    }
+
+    async function searchParentIssue() {
+      const query = document.getElementById('issue-parent').value.trim();
+      if (!query) {
+        return;
+      }
+
+      const resultsDiv = document.getElementById('parent-search-results');
+      resultsDiv.style.display = 'block';
+      resultsDiv.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--muted);">Поиск...</div>';
+
+      try {
+        const response = await fetch(`/api/jira/issues/search?query=${encodeURIComponent(query)}`);
+        const result = await response.json();
+
+        if (result.success && result.data && result.data.length > 0) {
+          resultsDiv.innerHTML = '';
+          result.data.forEach(issue => {
+            const div = document.createElement('div');
+            div.style.cssText = 'padding: 10px; border-bottom: 1px solid var(--border); cursor: pointer; hover:background: rgba(255,255,255,0.05);';
+            div.innerHTML = `<strong style="color: var(--primary);">${escapeHtml(issue.key)}</strong> - ${escapeHtml(issue.summary)}`;
+            div.onclick = () => {
+              document.getElementById('issue-parent').value = issue.key;
+              resultsDiv.style.display = 'none';
+            };
+            div.onmouseover = () => div.style.background = 'rgba(255,255,255,0.05)';
+            div.onmouseout = () => div.style.background = 'transparent';
+            resultsDiv.appendChild(div);
+          });
+        } else {
+          resultsDiv.innerHTML = '<div style="padding: 12px; text-align: center; color: var(--muted);">Задачи не найдены</div>';
+        }
+      } catch (e) {
+        console.error('Search parent error:', e);
+        resultsDiv.innerHTML = '<div style="padding: 12px; text-align: center; color: #ff5b5b;">Ошибка поиска</div>';
+      }
+    }
+
+    async function createJiraIssue() {
+      const submitBtn = document.getElementById('create-issue-submit');
+      const loadingDiv = document.getElementById('create-issue-loading');
+      const errorDiv = document.getElementById('create-issue-error');
+      const successDiv = document.getElementById('create-issue-success');
+
+      // Скрываем предыдущие сообщения
+      errorDiv.style.display = 'none';
+      successDiv.style.display = 'none';
+      loadingDiv.style.display = 'block';
+      submitBtn.disabled = true;
+
+      // Собираем данные формы
+      const project = document.getElementById('issue-project').value.trim();
+      const issuetype = document.getElementById('issue-type').value;
+      const summary = document.getElementById('issue-summary').value.trim();
+      const description = document.getElementById('issue-description').value.trim();
+      const priority = document.getElementById('issue-priority').value;
+      const parent = document.getElementById('issue-parent').value.trim();
+
+      if (!project || !summary || !issuetype) {
+        errorDiv.textContent = 'Заполните обязательные поля: Проект, Тип задачи, Заголовок';
+        errorDiv.style.display = 'block';
+        loadingDiv.style.display = 'none';
+        submitBtn.disabled = false;
+        return;
+      }
+
+      const body = {
+        project: project,
+        issuetype: issuetype,
+        summary: summary,
+      };
+
+      if (description) body.description = description;
+      if (priority) body.priority = priority;
+      if (parent) body.parent = parent;
+
+      try {
+        const response = await fetch('/api/jira/issues/create', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          successDiv.innerHTML = `Задача создана: <a href="${result.data.url}" target="_blank" style="color: #4caf50; text-decoration: underline;">${result.data.key}</a>`;
+          successDiv.style.display = 'block';
+          
+          // Очищаем форму через 2 секунды и закрываем модальное окно
+          setTimeout(() => {
+            closeCreateIssueModal();
+          }, 2000);
+        } else {
+          errorDiv.textContent = result.error || 'Ошибка создания задачи';
+          errorDiv.style.display = 'block';
+        }
+      } catch (e) {
+        console.error('Create issue error:', e);
+        errorDiv.textContent = 'Ошибка при создании задачи: ' + e.message;
+        errorDiv.style.display = 'block';
+      } finally {
+        loadingDiv.style.display = 'none';
+        submitBtn.disabled = false;
+      }
+    }
+
+    // Голосовое распознавание
+    let recognition = null;
+    let isRecording = false;
+
+    function startVoiceRecognition() {
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('Ваш браузер не поддерживает голосовое распознавание. Используйте Chrome, Edge или Safari.');
+        switchCreateMode('text');
+        return;
+      }
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'ru-RU';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      const recordBtn = document.getElementById('voice-record-btn');
+      const statusDiv = document.getElementById('voice-status');
+      const indicatorDiv = document.getElementById('voice-recording-indicator');
+      const previewDiv = document.getElementById('voice-preview');
+      const previewText = document.getElementById('voice-preview-text');
+
+      recognition.onstart = () => {
+        isRecording = true;
+        recordBtn.textContent = '⏹ Остановить запись';
+        recordBtn.onclick = stopVoiceRecognition;
+        statusDiv.textContent = 'Говорите...';
+        indicatorDiv.style.display = 'block';
+        previewDiv.style.display = 'none';
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        previewText.textContent = transcript;
+        previewDiv.style.display = 'block';
+        
+        const parsed = parseVoiceInput(transcript);
+        fillFormFromVoice(parsed);
+        
+        statusDiv.textContent = 'Распознавание завершено. Проверьте форму и нажмите "Создать задачу".';
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'no-speech') {
+          statusDiv.textContent = 'Речь не распознана. Попробуйте еще раз.';
+        } else if (event.error === 'not-allowed') {
+          statusDiv.textContent = 'Доступ к микрофону запрещен. Разрешите доступ в настройках браузера.';
+        } else {
+          statusDiv.textContent = 'Ошибка распознавания: ' + event.error;
+        }
+        stopVoiceRecognition();
+      };
+
+      recognition.onend = () => {
+        isRecording = false;
+        recordBtn.textContent = '🎤 Начать запись';
+        recordBtn.onclick = startVoiceRecognition;
+        indicatorDiv.style.display = 'none';
+      };
+
+      try {
+        recognition.start();
+      } catch (e) {
+        console.error('Start recognition error:', e);
+        statusDiv.textContent = 'Не удалось начать запись. Проверьте доступ к микрофону.';
+      }
+    }
+
+    function stopVoiceRecognition() {
+      if (recognition && isRecording) {
+        recognition.stop();
+      }
+    }
+
+    function parseVoiceInput(text) {
+      const result = {};
+      const lowerText = text.toLowerCase();
+
+      // Парсинг заголовка
+      const summaryMatch = text.match(/(?:заголовок|название|title)[\s:]+(.+?)(?=\s+(?:описание|приоритет|тип|родитель|$))/i);
+      if (summaryMatch) {
+        result.summary = summaryMatch[1].trim();
+      } else {
+        // Если нет ключевого слова, берем начало текста до первого ключевого слова
+        const firstKeyword = text.match(/\s+(описание|приоритет|тип|родитель)/i);
+        if (firstKeyword) {
+          result.summary = text.substring(0, firstKeyword.index).trim();
+        } else {
+          result.summary = text.trim();
+        }
+      }
+
+      // Парсинг описания
+      const descMatch = text.match(/(?:описание|description)[\s:]+(.+?)(?=\s+(?:приоритет|тип|родитель|заголовок|$))/i);
+      if (descMatch) {
+        result.description = descMatch[1].trim();
+      }
+
+      // Парсинг приоритета
+      const priorityMatch = text.match(/(?:приоритет|priority)[\s:]+(наивысший|высокий|средний|низкий|наинизший|highest|high|medium|low|lowest)/i);
+      if (priorityMatch) {
+        const priorityText = priorityMatch[1].toLowerCase();
+        const priorityMap = {
+          'наивысший': 'Highest',
+          'высокий': 'High',
+          'средний': 'Medium',
+          'низкий': 'Low',
+          'наинизший': 'Lowest',
+          'highest': 'Highest',
+          'high': 'High',
+          'medium': 'Medium',
+          'low': 'Low',
+          'lowest': 'Lowest',
+        };
+        result.priority = priorityMap[priorityText] || 'Medium';
+      }
+
+      // Парсинг типа задачи
+      const typeMatch = text.match(/(?:тип|type)[\s:]+(задача|task|баг|bug)/i);
+      if (typeMatch) {
+        const typeText = typeMatch[1].toLowerCase();
+        if (typeText === 'баг' || typeText === 'bug') {
+          result.issuetype = 'Bug';
+        } else {
+          result.issuetype = 'Task';
+        }
+      }
+
+      // Парсинг родительской задачи
+      const parentMatch = text.match(/(?:родитель|parent|эпик)[\s:]+([A-Z]+-\d+)/i);
+      if (parentMatch) {
+        result.parent = parentMatch[1];
+      }
+
+      return result;
+    }
+
+    function fillFormFromVoice(data) {
+      if (data.summary) {
+        document.getElementById('issue-summary').value = data.summary;
+      }
+      if (data.description) {
+        document.getElementById('issue-description').value = data.description;
+      }
+      if (data.priority) {
+        document.getElementById('issue-priority').value = data.priority;
+      }
+      if (data.issuetype) {
+        document.getElementById('issue-type').value = data.issuetype;
+      }
+      if (data.parent) {
+        document.getElementById('issue-parent').value = data.parent;
+      }
+    }
+
+    // Закрытие модального окна при клике на overlay
+    document.addEventListener('DOMContentLoaded', () => {
+      const modal = document.getElementById('create-issue-modal');
+      if (modal) {
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) {
+            closeCreateIssueModal();
+          }
+        });
+      }
+    });
   </script>
 </body>
 </html>

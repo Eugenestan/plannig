@@ -76,6 +76,145 @@ class Jira:
             raise RuntimeError(f"Get worklog failed: HTTP {r.status_code}: {r.text}")
         return r.json()
 
+    def create_issue(
+        self,
+        api_prefix: str,
+        project_key: str,
+        summary: str,
+        issuetype: str,
+        description: Optional[str] = None,
+        priority: Optional[str] = None,
+        parent_key: Optional[str] = None,
+    ) -> dict:
+        """
+        Создает задачу в Jira.
+        
+        Args:
+            api_prefix: Префикс API (например, "/rest/api/3")
+            project_key: Ключ проекта (например, "TNL")
+            summary: Заголовок задачи
+            issuetype: Тип задачи ("Task" или "Bug")
+            description: Описание задачи (опционально)
+            priority: Приоритет ("Highest", "High", "Medium", "Low", "Lowest") (опционально)
+            parent_key: Ключ родительской задачи (опционально)
+            
+        Returns:
+            dict: Созданная задача с полями key, id, self
+        """
+        body: Dict[str, Any] = {
+            "fields": {
+                "project": {"key": project_key},
+                "summary": summary,
+                "issuetype": {"name": issuetype},
+            }
+        }
+        
+        # Добавляем описание в формате ADF (Atlassian Document Format)
+        if description:
+            body["fields"]["description"] = {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": description}]
+                    }
+                ]
+            }
+        
+        # Добавляем приоритет
+        # Jira API требует либо ID приоритета, либо правильное имя
+        # Если приоритет указан, пробуем получить список и найти нужный
+        if priority:
+            try:
+                priorities_r = self.request("GET", f"{api_prefix}/priority")
+                if priorities_r.status_code == 200:
+                    priorities = priorities_r.json()
+                    # Ищем приоритет по имени (case-insensitive)
+                    priority_found = None
+                    for p in priorities:
+                        p_name = p.get("name", "").lower()
+                        if p_name == priority.lower():
+                            priority_found = p
+                            break
+                    
+                    if priority_found:
+                        # Используем ID приоритета (более надежно)
+                        priority_id = priority_found.get("id")
+                        if priority_id:
+                            body["fields"]["priority"] = {"id": str(priority_id)}
+                        else:
+                            # Если ID нет, используем name (fallback)
+                            body["fields"]["priority"] = {"name": priority_found.get("name")}
+                    # Если не нашли - не передаем приоритет (Jira установит дефолтный)
+            except Exception as e:
+                # Если не удалось получить приоритеты, просто не передаем приоритет
+                # Это безопаснее, чем передавать неверный формат
+                pass
+        
+        # Добавляем родительскую задачу
+        if parent_key:
+            body["fields"]["parent"] = {"key": parent_key}
+        
+        r = self.request("POST", f"{api_prefix}/issue", json_body=body)
+        if r.status_code not in (200, 201):
+            error_text = r.text[:500] if r.text else ""
+            raise RuntimeError(f"Failed to create issue: HTTP {r.status_code}: {error_text}")
+        return r.json()
+
+    def search_issues(self, api_prefix: str, query: str, max_results: int = 20) -> List[dict]:
+        """
+        Поиск задач по ключевым словам.
+        
+        Args:
+            api_prefix: Префикс API
+            query: Строка поиска
+            max_results: Максимальное количество результатов
+            
+        Returns:
+            List[dict]: Список задач с полями key и summary
+        """
+        # Экранируем специальные символы JQL
+        query_escaped = query.replace("'", "\\'").replace('"', '\\"')
+        jql = f"summary ~ '{query_escaped}' OR key ~ '{query_escaped}' ORDER BY updated DESC"
+        
+        try:
+            data = self.search_jql_page(jql, ["key", "summary"], max_results)
+            issues = data.get("issues", []) or data.get("values", [])
+            result = []
+            for issue in issues:
+                fields = issue.get("fields", {})
+                result.append({
+                    "key": issue.get("key", ""),
+                    "summary": fields.get("summary", ""),
+                })
+            return result
+        except Exception as e:
+            # Если поиск не удался, возвращаем пустой список
+            return []
+
+    def get_projects(self, api_prefix: str) -> List[dict]:
+        """
+        Получает список доступных проектов.
+        
+        Args:
+            api_prefix: Префикс API
+            
+        Returns:
+            List[dict]: Список проектов с полями key и name
+        """
+        r = self.request("GET", f"{api_prefix}/project")
+        if r.status_code != 200:
+            raise RuntimeError(f"Failed to get projects: HTTP {r.status_code}: {r.text}")
+        projects = r.json()
+        result = []
+        for project in projects:
+            result.append({
+                "key": project.get("key", ""),
+                "name": project.get("name", ""),
+            })
+        return result
+
 
 
 def build_headers_from_env() -> tuple[str, Dict[str, str]]:

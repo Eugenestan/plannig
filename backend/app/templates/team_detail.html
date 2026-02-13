@@ -44,6 +44,39 @@
         </div>
       </div>
     </form>
+
+    <form method="post" action="/teams/{{ team.id }}/telegram-settings" style="margin-top: 16px;">
+      <div class="card">
+        <div class="toolbar">
+          <div>
+            <h3 style="margin: 0;">Telegram-сводка</h3>
+            <p class="muted" style="margin: 6px 0 0 0;">
+              Рассылка для этой команды (Пн-Пт, 20:00 МСК): "ФИО - списано часов".
+            </p>
+          </div>
+          <button class="button primary" type="submit">Сохранить Telegram</button>
+        </div>
+        <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 10px; max-width: 520px;">
+          <label style="display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 14px;">Chat ID</span>
+            <input
+              class="input"
+              type="text"
+              name="chat_id"
+              value="{{ telegram_chat_id }}"
+              placeholder="-1001234567890 или @channel_name"
+            >
+          </label>
+          <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" name="enabled" {% if telegram_enabled %}checked{% endif %}>
+            <span>Включить ежедневную отправку</span>
+          </label>
+          <p class="muted" style="margin: 0; font-size: 13px;">
+            Чтобы отключить рассылку и удалить настройку, очистите Chat ID и сохраните.
+          </p>
+        </div>
+      </div>
+    </form>
   </div>
 
   <script>

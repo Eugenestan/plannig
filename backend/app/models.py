@@ -71,6 +71,26 @@ class Team(Base):
     )
 
 
+class TeamTelegramSetting(Base):
+    """
+    Настройки Telegram-рассылки по Jira-команде.
+    """
+
+    __tablename__ = "team_telegram_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, unique=True)
+    credential_id: Mapped[int] = mapped_column(ForeignKey("api_credentials.id", ondelete="CASCADE"), nullable=False)
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+
+    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    team: Mapped[Team] = relationship()
+    credential: Mapped[ApiCredential] = relationship()
+
+
 class User(Base):
     __tablename__ = "users"
 

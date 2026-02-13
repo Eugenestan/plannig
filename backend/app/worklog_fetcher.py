@@ -8,6 +8,8 @@ from typing import Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import math
+import re
+import os
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -70,6 +72,71 @@ def _coerce_issue_id(value) -> int | None:
             except Exception:
                 return None
     return None
+
+def _coerce_issue_key(value) -> str:
+    """
+    Возвращает Jira-ключ формата ABC-123, если удалось извлечь из значения.
+    """
+    if not isinstance(value, str):
+        return ""
+    s = value.strip().upper()
+    if re.fullmatch(r"[A-Z][A-Z0-9]+-\d+", s):
+        return s
+    return ""
+
+def _extract_issue_ref_from_worklog(worklog: dict) -> tuple[int | None, str]:
+    """
+    Пытается извлечь issueId/issueKey из worklog Jira в разных форматах.
+    """
+    # 1) Прямые поля
+    issue_id = (
+        _coerce_issue_id(worklog.get("issueId"))
+        or _coerce_issue_id(worklog.get("issueID"))
+        or _coerce_issue_id(worklog.get("issue_id"))
+    )
+    issue_key = (
+        _coerce_issue_key(worklog.get("issueKey"))
+        or _coerce_issue_key(worklog.get("issue"))
+        or _coerce_issue_key(worklog.get("key"))
+    )
+
+    # 2) Вложенный объект issue (если вдруг приходит)
+    issue_obj = worklog.get("issue")
+    if isinstance(issue_obj, dict):
+        if issue_id is None:
+            issue_id = (
+                _coerce_issue_id(issue_obj.get("id"))
+                or _coerce_issue_id(issue_obj.get("issueId"))
+            )
+        if not issue_key:
+            issue_key = _coerce_issue_key(issue_obj.get("key"))
+
+    # 3) Fallback: парсим из self URL вида .../issue/28265/worklog/...
+    if issue_id is None and not issue_key:
+        self_url = str(worklog.get("self") or "").strip()
+        if self_url:
+            m = re.search(r"/issue/([^/]+)/worklog", self_url)
+            if m:
+                ref = (m.group(1) or "").strip()
+                maybe_id = _coerce_issue_id(ref)
+                if maybe_id is not None:
+                    issue_id = maybe_id
+                else:
+                    issue_key = _coerce_issue_key(ref)
+
+    return issue_id, issue_key
+
+def _make_http_session_for_integrations() -> requests.Session:
+    """
+    HTTP-сессия для внешних интеграций (Teamboard/DevSamurai).
+    По умолчанию НЕ использует системные proxy-переменные, чтобы локально не падать с WinError 10061.
+    """
+    s = requests.Session()
+    use_system_proxy = (os.getenv("WORKLOG_USE_SYSTEM_PROXY") or "").strip().lower() in ("1", "true", "yes", "on")
+    s.trust_env = use_system_proxy
+    if not use_system_proxy:
+        s.proxies = {}
+    return s
 
 
 def get_team_worklog(
@@ -211,7 +278,8 @@ def get_team_worklog(
         payload = {"members": members, "startDate": start_date_str, "endDate": end_date_str}
         headers = {"accept": "application/json", "content-type": "application/json", "authorization": jwt}
 
-        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        with _make_http_session_for_integrations() as session:
+            r = session.post(url, headers=headers, json=payload, timeout=30)
         if r.status_code != 200:
             raise RuntimeError(f"DevSamurai timelogs/search failed: HTTP {r.status_code}: {r.text}")
         data = r.json()
@@ -244,45 +312,77 @@ def get_team_worklog(
         limit = 100
         offset = 0
         out: list[dict] = []
-        for _ in range(50):  # safety
-            params = [
-                ("from", start_date_str),
-                ("to", end_date_str),
-                ("limit", str(limit)),
-                ("offset", str(offset)),
-            ]
-            for uid in user_ids:
-                params.append(("userIds", uid))
+        active_user_ids = list(dict.fromkeys(user_ids))
+        with _make_http_session_for_integrations() as session:
+            for _ in range(50):  # safety
+                if not active_user_ids:
+                    break
+                params = [
+                    ("from", start_date_str),
+                    ("to", end_date_str),
+                    ("limit", str(limit)),
+                    ("offset", str(offset)),
+                ]
+                for uid in active_user_ids:
+                    params.append(("userIds", uid))
 
-            r = requests.get(url, headers=headers, params=params, timeout=30)
-            if r.status_code != 200:
-                raise RuntimeError(f"Teamboard timelogs failed: HTTP {r.status_code}: {r.text}")
+                r = session.get(url, headers=headers, params=params, timeout=30)
+                if r.status_code == 403:
+                    # Teamboard может валить весь ответ, если среди userIds есть невалидные аккаунты.
+                    # Пробуем исключить их и повторить запрос.
+                    invalid_ids: list[str] = []
+                    try:
+                        payload_403 = r.json() or {}
+                        errors = payload_403.get("errors") or []
+                        if isinstance(errors, list):
+                            for err in errors:
+                                if not isinstance(err, str):
+                                    continue
+                                m = re.search(r"Invalid user accounts:\s*(.+)$", err, flags=re.IGNORECASE)
+                                if not m:
+                                    continue
+                                invalid_ids.extend([x.strip() for x in m.group(1).split(",") if x.strip()])
+                    except Exception:
+                        pass
+                    if not invalid_ids:
+                        raise RuntimeError(f"Teamboard timelogs failed: HTTP {r.status_code}: {r.text}")
 
-            payload = r.json() or {}
-            data = payload.get("data") or []
-            if isinstance(data, list):
-                out.extend([x for x in data if isinstance(x, dict)])
+                    active_user_ids = [uid for uid in active_user_ids if uid not in set(invalid_ids)]
+                    # Повторяем тот же offset уже без битых userIds
+                    continue
+                if r.status_code != 200:
+                    raise RuntimeError(f"Teamboard timelogs failed: HTTP {r.status_code}: {r.text}")
 
-            has_more = bool(payload.get("hasMore"))
-            if not has_more:
-                break
-            offset = int(payload.get("offset") or offset) + int(payload.get("limit") or limit)
+                payload = r.json() or {}
+                data = payload.get("data") or []
+                if isinstance(data, list):
+                    out.extend([x for x in data if isinstance(x, dict)])
+
+                has_more = bool(payload.get("hasMore"))
+                if not has_more:
+                    break
+                offset = int(payload.get("offset") or offset) + int(payload.get("limit") or limit)
 
         return out
 
-    def _fetch_issue_key_summary(issue_id: int) -> tuple[str, str]:
+    def _fetch_issue_key_summary(issue_ref: int | str) -> tuple[str, str]:
         """
-        Получить key+summary по числовому issue_id.
-        Jira Cloud поддерживает /issue/{issueIdOrKey} и для numeric issueId.
+        Получить key+summary по issueId или issueKey.
         """
         try:
-            r = jira.request("GET", f"{api_prefix}/issue/{issue_id}?fields=summary")
+            r = jira.request("GET", f"{api_prefix}/issue/{issue_ref}?fields=summary")
             if r.status_code == 200:
                 j = r.json()
-                return (j.get("key") or str(issue_id), (j.get("fields", {}) or {}).get("summary") or (j.get("key") or str(issue_id)))
+                key = (j.get("key") or "").strip()
+                fallback = str(issue_ref)
+                return (
+                    key or fallback,
+                    (j.get("fields", {}) or {}).get("summary") or key or fallback,
+                )
         except Exception:
             pass
-        return (str(issue_id), str(issue_id))
+        fallback = str(issue_ref)
+        return (fallback, fallback)
 
     def _get_worklogs_via_updated() -> List[dict]:
         """
@@ -352,8 +452,9 @@ def get_team_worklog(
     try:
         raw_worklogs = _get_worklogs_via_updated()
 
-        # Сначала соберем метаданные по issueId, чтобы не дергать Jira на каждую запись
+        # Сначала соберем метаданные по issueId/issueKey, чтобы не дергать Jira на каждую запись
         issue_ids: set[int] = set()
+        issue_keys: set[str] = set()
 
         normalized: list[dict] = []
         for wl in raw_worklogs:
@@ -383,9 +484,11 @@ def get_team_worklog(
             if wl_dt.date() < start_date.date() or wl_dt.date() > end_date.date():
                 continue
 
-            issue_id = _coerce_issue_id(wl.get("issueId"))
+            issue_id, issue_key = _extract_issue_ref_from_worklog(wl)
             if issue_id is not None:
                 issue_ids.add(issue_id)
+            if issue_key:
+                issue_keys.add(issue_key)
 
             normalized.append({
                 "account_id": account_id,
@@ -395,9 +498,11 @@ def get_team_worklog(
                 "time_spent": wl.get("timeSpent") or "",
                 "comment": _comment_to_text(wl.get("comment")),
                 "issue_id": issue_id,
+                "issue_key": issue_key,
             })
 
         issue_meta: Dict[int, tuple[str, str]] = {}
+        issue_meta_by_key: Dict[str, tuple[str, str]] = {}
         if issue_ids:
             with ThreadPoolExecutor(max_workers=10) as ex:
                 future_to_id = {ex.submit(_fetch_issue_key_summary, iid): iid for iid in issue_ids}
@@ -407,6 +512,15 @@ def get_team_worklog(
                         issue_meta[iid] = fut.result()
                     except Exception:
                         issue_meta[iid] = (str(iid), str(iid))
+        if issue_keys:
+            with ThreadPoolExecutor(max_workers=10) as ex:
+                future_to_key = {ex.submit(_fetch_issue_key_summary, ik): ik for ik in issue_keys}
+                for fut in as_completed(future_to_key):
+                    ik = future_to_key[fut]
+                    try:
+                        issue_meta_by_key[ik] = fut.result()
+                    except Exception:
+                        issue_meta_by_key[ik] = (ik, ik)
 
         for item in normalized:
             user = user_by_account_id[item["account_id"]]
@@ -419,6 +533,11 @@ def get_team_worklog(
             iid = item.get("issue_id")
             if isinstance(iid, int) and iid in issue_meta:
                 issue_key, issue_summary = issue_meta[iid]
+            elif item.get("issue_key") in issue_meta_by_key:
+                issue_key, issue_summary = issue_meta_by_key[item["issue_key"]]
+            elif item.get("issue_key"):
+                issue_key = str(item["issue_key"])
+                issue_summary = str(item["issue_key"])
             elif isinstance(iid, int):
                 issue_key = str(iid)
                 issue_summary = str(iid)
@@ -621,6 +740,7 @@ def get_team_worklog(
         normalized_tb: list[dict] = []
         included_events = 0
         skipped_issue_logs = 0
+        skipped_issue_logs_non_numeric = 0
 
         for tl in tb_logs:
             account_id = tl.get("assignee")
@@ -633,8 +753,10 @@ def get_team_worklog(
 
             # ВАЖНО: Teamboard возвращает как "event" (custom_task и т.п.), так и логи по Jira issue.
             # Jira-логи мы уже считаем через Jira worklog (чтобы не было дублей),
-            # поэтому здесь учитываем ТОЛЬКО ивенты (issueId == null).
-            if tl.get("issueId") is not None:
+            # поэтому исключаем только записи с РЕАЛЬНЫМ issueId.
+            raw_issue_id = tl.get("issueId")
+            issue_id = _coerce_issue_id(raw_issue_id)
+            if issue_id is not None:
                 skipped_issue_logs += 1
                 continue
 
@@ -646,10 +768,10 @@ def get_team_worklog(
             if seconds <= 0:
                 continue
 
-            issue_id = _coerce_issue_id(tl.get("issueId"))
-            # issue_id здесь всегда None (см. фильтр выше), оставляем для будущей совместимости
-            if issue_id is not None:
-                issue_ids.add(issue_id)
+            # Иногда в event прилетают странные "issueId" (пустая строка/"null"/нечисловые),
+            # не считаем их Jira-логами и не отбрасываем запись.
+            if raw_issue_id not in (None, "") and issue_id is None:
+                skipped_issue_logs_non_numeric += 1
 
             normalized_tb.append({
                 "account_id": account_id,
@@ -667,6 +789,7 @@ def get_team_worklog(
         debug_out["sources"]["teamboard"].update({
             "included_events": included_events,
             "skipped_issue_logs": skipped_issue_logs,
+            "skipped_issue_logs_non_numeric": skipped_issue_logs_non_numeric,
         })
 
         issue_meta: Dict[int, tuple[str, str]] = {}

@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     teamboard_base_url: str = "https://api.teamboard.cloud/v1"
     teamboard_bearer_jwt: str = ""
 
+    # Telegram bot notifications
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""
+    telegram_api_base_url: str = "https://api.telegram.org"
+    telegram_connect_timeout_seconds: float = 10.0
+    telegram_read_timeout_seconds: float = 20.0
+
     @property
     def jira_secrets_file_abs(self) -> str:
         """Абсолютный путь к jira_secrets.env (относительно backend/)."""

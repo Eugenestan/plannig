@@ -32,6 +32,14 @@ class Jira:
     def __init__(self, base_url: str, headers: Dict[str, str], timeout_s: int = 120) -> None:
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
+        # По умолчанию не используем системные HTTP(S)_PROXY переменные:
+        # в локальной сети/без прокси они часто приводят к WinError 10061.
+        # При необходимости можно вернуть старое поведение:
+        # JIRA_USE_SYSTEM_PROXY=true
+        use_system_proxy = (os.getenv("JIRA_USE_SYSTEM_PROXY") or "").strip().lower() in ("1", "true", "yes", "on")
+        self.session.trust_env = use_system_proxy
+        if not use_system_proxy:
+            self.session.proxies = {}
         self.session.headers.update(headers)
         self.timeout_s = timeout_s
     

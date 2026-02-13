@@ -23,6 +23,7 @@ from .models import (
     GanttState,
     ImproveTaskOrder,
     Team,
+    TeamTelegramSetting,
     TeamMember,
     TodoList,
     TodoTask,
@@ -225,6 +226,11 @@ def team_detail(request: Request, team_id: int, db: Session = Depends(get_db)) -
             .order_by(User.display_name.asc())
         ).all()
         selected_user_ids = {tm.user_id for tm in team.members}
+        tg_setting = db.scalar(
+            select(TeamTelegramSetting)
+            .join(ApiCredential, ApiCredential.id == TeamTelegramSetting.credential_id)
+            .where(TeamTelegramSetting.team_id == team_id, ApiCredential.app_user_id == app_user.id)
+        )
         return templates.TemplateResponse(
             "team_detail.html",
             {
@@ -232,6 +238,8 @@ def team_detail(request: Request, team_id: int, db: Session = Depends(get_db)) -
                 "team": team,
                 "all_users": all_users,
                 "selected_user_ids": selected_user_ids,
+                "telegram_chat_id": tg_setting.chat_id if tg_setting else "",
+                "telegram_enabled": bool(tg_setting.enabled) if tg_setting else False,
             },
         )
     except RuntimeError as e:
@@ -287,6 +295,54 @@ def update_team_members(
 
     # fallback (на всякий)
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/teams/{team_id}/telegram-settings", response_class=RedirectResponse)
+def update_team_telegram_settings(
+    request: Request,
+    team_id: int,
+    chat_id: str = Form(default=""),
+    enabled: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    try:
+        app_user = get_app_user_from_session(request, db)
+        allowed_team = check_team_access(db, app_user.id, team_id, is_custom=False)
+        if allowed_team is None:
+            return RedirectResponse(url="/", status_code=303)
+
+        session_cred = get_credential_from_session(request, db)
+        if session_cred.app_user_id != app_user.id:
+            return RedirectResponse(url="/", status_code=303)
+
+        normalized_chat_id = (chat_id or "").strip()
+        is_enabled = enabled == "on"
+        existing = db.scalar(
+            select(TeamTelegramSetting).where(TeamTelegramSetting.team_id == team_id)
+        )
+
+        if not normalized_chat_id:
+            if existing is not None:
+                db.delete(existing)
+                db.commit()
+            return RedirectResponse(url=f"/teams/{team_id}", status_code=303)
+
+        if existing is None:
+            existing = TeamTelegramSetting(
+                team_id=team_id,
+                credential_id=session_cred.id,
+                chat_id=normalized_chat_id,
+                enabled=is_enabled,
+            )
+            db.add(existing)
+        else:
+            existing.credential_id = session_cred.id
+            existing.chat_id = normalized_chat_id
+            existing.enabled = is_enabled
+        db.commit()
+        return RedirectResponse(url=f"/teams/{team_id}", status_code=303)
+    except RuntimeError:
+        return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/teams/{team_id}/dashboard", response_class=HTMLResponse)

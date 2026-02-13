@@ -550,11 +550,15 @@
     }
 
     function renderWorklogTitle(entry) {
-      const key = String(entry.issue_key || '').trim();
-      const summary = String(entry.issue_summary || '').trim();
-      const title = summary.substring(0, 60) + (summary.length > 60 ? '...' : '');
+      const key = String(entry.issue_key || entry.issueKey || entry.key || '').trim();
+      const summary = String(entry.issue_summary || entry.issueSummary || entry.summary || '').trim();
+      const comment = String(entry.comment || '').trim();
+      const fallbackTitle = comment.replace(/^\[(Teamboard|TimePlanner):[^\]]+\]\s*/i, '').trim();
+      const rawTitle = summary || fallbackTitle;
+      const title = rawTitle.substring(0, 60) + (rawTitle.length > 60 ? '...' : '');
+      const isJiraKey = /^[A-Z][A-Z0-9]+-\d+$/i.test(key);
 
-      if (key) {
+      if (key && isJiraKey) {
         // Jira task: clickable key + title
         const href = 'https://topntop.atlassian.net/browse/' + escapeHtml(key);
         const keyHtml =
@@ -565,8 +569,12 @@
         return keyHtml + (title ? (': ' + escapeHtml(title)) : '');
       }
 
+      if (key) {
+        return escapeHtml(key) + (title ? (': ' + escapeHtml(title)) : '');
+      }
+
       // TimePlanner event: just name (no colon, no empty key)
-      return escapeHtml(title || summary || '');
+      return escapeHtml(title || 'Без названия задачи');
     }
     
     function formatEntries(entries, period) {

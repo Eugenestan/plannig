@@ -1,0 +1,3 @@
+# Daily Telegram summary (Mon-Fri, 20:00 MSK)
+CRON_TZ=Europe/Moscow
+0 20 * * 1-5 cd /opt/planing/backend && /usr/bin/python3 -m app.daily_summary >> /var/log/planing_daily_summary.log 2>&1

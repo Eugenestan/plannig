@@ -69,6 +69,13 @@ TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=<token от BotFather>
 ```
 
+Для Slack (опционально, параллельно с Telegram или отдельно):
+```
+SLACK_ENABLED=true
+SLACK_WEBHOOK_URL=<incoming webhook URL>
+# SLACK_CHANNEL=#team-reports   # опционально
+```
+
 2) Для каждой Jira-команды откройте страницу команды (`/teams/{id}`), заполните `Chat ID` и включите флаг рассылки.
 
 3) Проверка без отправки:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import base64
 import os
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
@@ -15,6 +14,7 @@ from .config import settings
 from .db import SessionLocal
 from .jira_client import Jira, load_env_file
 from .models import ApiCredential, Team, TeamTelegramSetting
+from .slack_notifier import send_slack_message
 from .telegram_notifier import send_message
 from .worklog_fetcher import get_team_worklog
 
@@ -77,33 +77,10 @@ def _build_summary_text(team_name: str, rows: list[dict]) -> str:
         lines.append(f"{user_index}. {user_name} - {total_hours:.1f} ч")
         user_index += 1
 
-        # Показываем сначала самые длительные списания.
-        sorted_entries = sorted(
-            entries,
-            key=lambda item: int(item.get("time_spent_seconds") or 0),
-            reverse=True,
-        )
-        for entry in sorted_entries:
-            seconds = int(entry.get("time_spent_seconds") or 0)
-            hours = seconds / 3600.0
-            time_text = f"{hours:.1f} ч"
-
-            issue_key = (entry.get("issue_key") or "").strip()
-            issue_summary = (entry.get("issue_summary") or "").strip()
-            comment = (entry.get("comment") or "").strip()
-
-            # Для event-списаний issue_key пустой — используем название из comment.
-            if issue_key:
-                title = issue_summary or issue_key
-                lines.append(f"* {issue_key} + {title} + {time_text}")
-            else:
-                event_name = comment or issue_summary or "Event"
-                # Убираем технические префиксы интеграций:
-                # [Teamboard:event], [Teamboard:custom_task], [TimePlanner:...]
-                event_name = re.sub(r"^\[[^\]]+:[^\]]+\]\s*", "", event_name).strip()
-                if not event_name:
-                    event_name = "Event"
-                lines.append(f"* {event_name} + {time_text}")
+        # Детализированный список задач/ивентов временно отключен.
+        # Если потребуется вернуть:
+        # 1) сортируем entries по time_spent_seconds,
+        # 2) выводим строки "* ключ + название + время" (или event + время).
 
     if user_index == 1:
         lines.append("Сегодня списаний нет.")
@@ -119,6 +96,18 @@ def _build_combined_summary_text(team_sections: list[tuple[str, list[dict]]]) ->
 
 def _is_weekday_msk(now: datetime) -> bool:
     return now.astimezone(MSK_TZ).weekday() < 5
+
+
+def _send_to_enabled_channels(chat_id: str, text: str) -> None:
+    sent_any = False
+    if settings.telegram_enabled:
+        send_message(chat_id, text)
+        sent_any = True
+    if settings.slack_enabled:
+        send_slack_message(text)
+        sent_any = True
+    if not sent_any:
+        raise RuntimeError("No channels enabled: set TELEGRAM_ENABLED=true and/or SLACK_ENABLED=true")
 
 
 def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: int | None = None) -> list[TeamSummaryResult]:
@@ -192,7 +181,7 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                         sent = True
                         reason = "dry-run"
                     else:
-                        send_message(chat_id, text)
+                        _send_to_enabled_channels(chat_id, text)
                         sent = True
                         reason = "sent"
                 except Exception as exc:  # noqa: BLE001
@@ -242,7 +231,7 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                     sent = True
                     reason = "dry-run"
                 else:
-                    send_message(setting.chat_id, text)
+                    _send_to_enabled_channels(setting.chat_id, text)
                     sent = True
                     reason = "sent"
             except Exception as exc:  # noqa: BLE001

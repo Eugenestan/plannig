@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     telegram_connect_timeout_seconds: float = 10.0
     telegram_read_timeout_seconds: float = 20.0
 
+    # Slack notifications (Incoming Webhook)
+    slack_enabled: bool = False
+    slack_webhook_url: str = ""
+    slack_channel: str = ""
+    slack_connect_timeout_seconds: float = 10.0
+    slack_read_timeout_seconds: float = 20.0
+
     @property
     def jira_secrets_file_abs(self) -> str:
         """Абсолютный путь к jira_secrets.env (относительно backend/)."""

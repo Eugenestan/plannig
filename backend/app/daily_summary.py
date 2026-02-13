@@ -71,8 +71,6 @@ def _build_summary_text(team_name: str, rows: list[dict]) -> str:
     user_index = 1
     for row in rows:
         entries = row.get("entries") or []
-        if not entries:
-            continue
 
         user_name = (row.get("user_name") or "Неизвестный сотрудник").strip()
         total_hours = float(row.get("total_hours") or 0.0)

@@ -19,6 +19,8 @@ from .telegram_notifier import send_message
 from .worklog_fetcher import get_team_worklog
 
 MSK_TZ = ZoneInfo("Europe/Moscow")
+GLOBAL_SUMMARY_TEAM_ORDER = [3, 1, 2, 4]
+GLOBAL_SUMMARY_TEAM_IDS = set(GLOBAL_SUMMARY_TEAM_ORDER)
 
 
 @dataclass(slots=True)
@@ -110,6 +112,13 @@ def _build_summary_text(team_name: str, rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _build_combined_summary_text(team_sections: list[tuple[str, list[dict]]]) -> str:
+    blocks: list[str] = []
+    for team_name, rows in team_sections:
+        blocks.append(_build_summary_text(team_name, rows))
+    return "\n\n".join(blocks)
+
+
 def _is_weekday_msk(now: datetime) -> bool:
     return now.astimezone(MSK_TZ).weekday() < 5
 
@@ -131,12 +140,86 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
         )
         if team_id is not None:
             query = query.where(TeamTelegramSetting.team_id == team_id)
+        else:
+            # Авторассылка отправляет только команды из фиксированного списка.
+            query = query.where(TeamTelegramSetting.team_id.in_(GLOBAL_SUMMARY_TEAM_IDS))
 
         targets = db.execute(query).all()
         results: list[TeamSummaryResult] = []
         jira_cache: dict[int, tuple[Jira, str]] = {}
+        processed_team_ids: set[int] = set()
+
+        # Спец-режим: единая сводка по выбранным командам (1 и 3).
+        # Группируем по chat_id, чтобы в один чат уходило одно сообщение с несколькими командами.
+        if team_id is None:
+            grouped_targets: dict[str, list[tuple[TeamTelegramSetting, Team, ApiCredential]]] = {}
+            for setting, team, credential in targets:
+                if team.id not in GLOBAL_SUMMARY_TEAM_IDS:
+                    continue
+                grouped_targets.setdefault(setting.chat_id, []).append((setting, team, credential))
+
+            for chat_id, grouped in grouped_targets.items():
+                started = perf_counter()
+                masked = _mask_chat_id(chat_id)
+                try:
+                    team_sections: list[tuple[str, list[dict]]] = []
+                    order_map = {team_id_value: idx for idx, team_id_value in enumerate(GLOBAL_SUMMARY_TEAM_ORDER)}
+                    grouped_sorted = sorted(
+                        grouped,
+                        key=lambda item: order_map.get(item[1].id, 10_000 + item[1].id),
+                    )
+                    grouped_team_ids: list[int] = []
+                    for setting, team, credential in grouped_sorted:
+                        jira_and_prefix = jira_cache.get(credential.id)
+                        if jira_and_prefix is None:
+                            jira_and_prefix = _build_jira_client_from_credential(credential)
+                            jira_cache[credential.id] = jira_and_prefix
+                        jira, api_prefix = jira_and_prefix
+
+                        rows = get_team_worklog(
+                            db,
+                            team.id,
+                            days="today",
+                            jira=jira,
+                            api_prefix=api_prefix,
+                            credential_id=credential.id,
+                        )
+                        team_sections.append((team.name, rows))
+                        processed_team_ids.add(team.id)
+                        grouped_team_ids.append(team.id)
+
+                    text = _build_combined_summary_text(team_sections)
+                    if dry_run:
+                        print(f"[DRY-RUN] combined teams={grouped_team_ids} chat_id={masked}\n{text}\n")
+                        sent = True
+                        reason = "dry-run"
+                    else:
+                        send_message(chat_id, text)
+                        sent = True
+                        reason = "sent"
+                except Exception as exc:  # noqa: BLE001
+                    sent = False
+                    reason = f"error: {exc}"
+
+                elapsed_ms = int((perf_counter() - started) * 1000)
+                results.append(
+                    TeamSummaryResult(
+                        team_id=0,
+                        team_name="combined",
+                        chat_id_masked=masked,
+                        sent=sent,
+                        reason=reason,
+                        duration_ms=elapsed_ms,
+                    )
+                )
+                print(
+                    f"combined_teams={GLOBAL_SUMMARY_TEAM_ORDER} chat_id={masked} "
+                    f"status={'ok' if sent else 'fail'} reason={reason} duration_ms={elapsed_ms}"
+                )
 
         for setting, team, credential in targets:
+            if team.id in processed_team_ids:
+                continue
             started = perf_counter()
             masked = _mask_chat_id(setting.chat_id)
             try:

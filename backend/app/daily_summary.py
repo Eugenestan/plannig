@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import base64
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
@@ -65,10 +66,47 @@ def _build_summary_text(team_name: str, rows: list[dict]) -> str:
         return f"{team_name}\nСегодня списаний нет."
 
     lines = [team_name]
+    user_index = 1
     for row in rows:
+        entries = row.get("entries") or []
+        if not entries:
+            continue
+
         user_name = (row.get("user_name") or "Неизвестный сотрудник").strip()
-        hours = float(row.get("total_hours") or 0.0)
-        lines.append(f"{user_name} - {hours:.1f} ч")
+        total_hours = float(row.get("total_hours") or 0.0)
+        lines.append(f"{user_index}. {user_name} - {total_hours:.1f} ч")
+        user_index += 1
+
+        # Показываем сначала самые длительные списания.
+        sorted_entries = sorted(
+            entries,
+            key=lambda item: int(item.get("time_spent_seconds") or 0),
+            reverse=True,
+        )
+        for entry in sorted_entries:
+            seconds = int(entry.get("time_spent_seconds") or 0)
+            hours = seconds / 3600.0
+            time_text = f"{hours:.1f} ч"
+
+            issue_key = (entry.get("issue_key") or "").strip()
+            issue_summary = (entry.get("issue_summary") or "").strip()
+            comment = (entry.get("comment") or "").strip()
+
+            # Для event-списаний issue_key пустой — используем название из comment.
+            if issue_key:
+                title = issue_summary or issue_key
+                lines.append(f"* {issue_key} + {title} + {time_text}")
+            else:
+                event_name = comment or issue_summary or "Event"
+                # Убираем технические префиксы интеграций:
+                # [Teamboard:event], [Teamboard:custom_task], [TimePlanner:...]
+                event_name = re.sub(r"^\[[^\]]+:[^\]]+\]\s*", "", event_name).strip()
+                if not event_name:
+                    event_name = "Event"
+                lines.append(f"* {event_name} + {time_text}")
+
+    if user_index == 1:
+        lines.append("Сегодня списаний нет.")
     return "\n".join(lines)
 
 

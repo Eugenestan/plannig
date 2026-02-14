@@ -45,10 +45,11 @@ class Settings(BaseSettings):
     telegram_connect_timeout_seconds: float = 10.0
     telegram_read_timeout_seconds: float = 20.0
 
-    # Slack notifications (Incoming Webhook)
+    # Slack notifications (chat.postMessage)
     slack_enabled: bool = False
-    slack_webhook_url: str = ""
-    slack_channel: str = ""
+    slack_bot_token: str = ""
+    slack_channel_id: str = ""
+    slack_api_base_url: str = "https://slack.com/api"
     slack_connect_timeout_seconds: float = 10.0
     slack_read_timeout_seconds: float = 20.0
 

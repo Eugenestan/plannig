@@ -69,11 +69,11 @@ TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=<token от BotFather>
 ```
 
-Для Slack (опционально, параллельно с Telegram или отдельно):
+Для Slack (опционально, параллельно с Telegram или отдельно, через `chat.postMessage`):
 ```
 SLACK_ENABLED=true
-SLACK_WEBHOOK_URL=<incoming webhook URL>
-# SLACK_CHANNEL=#team-reports   # опционально
+SLACK_BOT_TOKEN=<xoxb token>
+SLACK_CHANNEL_ID=<C... channel id>
 ```
 
 2) Для каждой Jira-команды откройте страницу команды (`/teams/{id}`), заполните `Chat ID` и включите флаг рассылки.
@@ -98,5 +98,61 @@ CRON_TZ=Europe/Moscow
 ```
 
 Если timezone cron не поддерживается, задайте `TZ=Europe/Moscow` в окружении сервиса/контейнера.
+
+## Прод-деплой сводки в Telegram и Slack
+
+Ниже шаги для развертывания отправки общей сводки по командам `3, 1, 2, 4`.
+
+1) Обновите код на сервере и активируйте окружение:
+```bash
+cd /opt/planing/backend
+source .venv/bin/activate
+```
+
+2) Убедитесь, что выполнена миграция Telegram-настроек команд:
+```bash
+python -m app.migrate_team_telegram_settings
+```
+
+3) В `config.env` задайте каналы доставки:
+```env
+# Telegram
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=<bot token>
+
+# Slack (chat.postMessage)
+SLACK_ENABLED=true
+SLACK_BOT_TOKEN=<xoxb token>
+SLACK_CHANNEL_ID=<C...>
+```
+
+4) Для Telegram заполните `Chat ID` у команд на странице `/teams/{id}` и включите флаг рассылки.
+Для общей сводки используются команды `3, 1, 2, 4` (фиксировано в коде).
+
+5) Убедитесь, что Slack-бот приглашен в канал:
+```text
+/invite @<bot_name>
+```
+
+6) Проверка перед боем:
+```bash
+python -m app.daily_summary --dry-run --force
+```
+
+7) Боевая проверка (реальная отправка):
+```bash
+python -m app.daily_summary --force
+```
+
+8) Расписание на будни 20:00 МСК:
+```cron
+CRON_TZ=Europe/Moscow
+0 20 * * 1-5 cd /opt/planing/backend && /opt/planing/backend/.venv/bin/python -m app.daily_summary >> /var/log/planing_daily_summary.log 2>&1
+```
+
+9) Диагностика:
+```bash
+tail -n 200 /var/log/planing_daily_summary.log
+```
 
 

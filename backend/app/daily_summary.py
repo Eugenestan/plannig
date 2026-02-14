@@ -65,7 +65,7 @@ def _build_jira_client_from_credential(credential: ApiCredential) -> tuple[Jira,
 
 def _build_summary_text(team_name: str, rows: list[dict]) -> str:
     if not rows:
-        return f"{team_name}\nЗа вчера списаний нет."
+        return f"{team_name}\nЗа предыдущий рабочий день списаний нет."
 
     lines = [team_name]
     user_index = 1
@@ -83,7 +83,7 @@ def _build_summary_text(team_name: str, rows: list[dict]) -> str:
         # 2) выводим строки "* ключ + название + время" (или event + время).
 
     if user_index == 1:
-        lines.append("За вчера списаний нет.")
+        lines.append("За предыдущий рабочий день списаний нет.")
     return "\n".join(lines)
 
 
@@ -166,7 +166,7 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                         rows = get_team_worklog(
                             db,
                             team.id,
-                            days="yesterday",
+                            days="previous_workday",
                             jira=jira,
                             api_prefix=api_prefix,
                             credential_id=credential.id,
@@ -219,7 +219,7 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                 rows = get_team_worklog(
                     db,
                     team.id,
-                    days="yesterday",
+                    days="previous_workday",
                     jira=jira,
                     api_prefix=api_prefix,
                     credential_id=credential.id,

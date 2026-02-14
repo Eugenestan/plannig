@@ -224,7 +224,15 @@ def get_team_worklog(
 
     # Вычисляем даты в зависимости от параметра days
     now = datetime.now()
-    if days == "today":
+    if days == "previous_workday":
+        # Ищем последний рабочий день перед текущей датой.
+        # Пн -> Пт, Вт -> Пн, Вс -> Пт и т.д.
+        previous_day = now - timedelta(days=1)
+        while previous_day.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            previous_day -= timedelta(days=1)
+        start_date = datetime(previous_day.year, previous_day.month, previous_day.day, 0, 0, 0)
+        end_date = datetime(previous_day.year, previous_day.month, previous_day.day, 23, 59, 59)
+    elif days == "today":
         # Сегодня
         start_date = datetime(now.year, now.month, now.day, 0, 0, 0)
         end_date = datetime(now.year, now.month, now.day, 23, 59, 59)

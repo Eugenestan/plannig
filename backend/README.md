@@ -99,6 +99,37 @@ CRON_TZ=Europe/Moscow
 
 Если timezone cron не поддерживается, задайте `TZ=Europe/Moscow` в окружении сервиса/контейнера.
 
+## Telegram-уведомления о релизах
+
+Скрипт отправляет общий список невыпущенных релизов (без разбивки по командам) с датой релиза на сегодня или раньше:
+
+- фильтр: `released != true`
+- фильтр: `releaseDate <= today (MSK)`
+- формат строки: `Название - срок релиза`
+
+1) Используются те же Telegram-настройки:
+```env
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=<token от BotFather>
+```
+
+2) Проверка без отправки:
+```powershell
+cd C:\Users\Steve\planing\plannig\backend
+python -m app.release_notifications --dry-run --force
+```
+
+3) Боевая отправка:
+```powershell
+python -m app.release_notifications
+```
+
+4) Пример cron (Пн-Пт, 10:00 МСК):
+```cron
+CRON_TZ=Europe/Moscow
+0 10 * * 1-5 cd /opt/planing/backend && /usr/bin/python3 -m app.release_notifications >> /var/log/planing_release_notifications.log 2>&1
+```
+
 ## Прод-деплой сводки в Telegram и Slack
 
 Ниже шаги для развертывания отправки общей сводки по командам `3, 1, 2, 4`.

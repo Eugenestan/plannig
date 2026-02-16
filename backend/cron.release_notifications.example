@@ -1,0 +1,2 @@
+CRON_TZ=Europe/Moscow
+0 10 * * 1-5 cd /opt/planing/backend && /usr/bin/python3 -m app.release_notifications >> /var/log/planing_release_notifications.log 2>&1

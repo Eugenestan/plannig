@@ -32,6 +32,7 @@ from .models import (
 )
 from .sync_jira import credential_has_any_team, sync_from_jira_for_credential
 from .worklog_fetcher import get_team_worklog
+from .release_fetcher import get_releases_for_current_user
 from .config import settings
 from .jira_client import Jira, load_env_file
 import os
@@ -606,7 +607,6 @@ def api_team_epics(request: Request, team_id: int, db: Session = Depends(get_db)
 def api_team_releases(request: Request, team_id: int, db: Session = Depends(get_db)):
     """API endpoint для получения релизов команды."""
     from fastapi.responses import JSONResponse
-    from datetime import datetime
     
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
@@ -615,64 +615,8 @@ def api_team_releases(request: Request, team_id: int, db: Session = Depends(get_
         )
         if allowed is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
-        
-        # JQL запрос для эпиков с версиями исправления
-        jql = 'project = TNL AND type = Epic AND status NOT IN (Отменено, Done) AND assignee = currentUser() AND fixVersion IS NOT EMPTY'
-        
-        # Получаем эпики
-        all_releases = []
-        next_token = ""
-        page_size = 200
-        
-        while True:
-            data = jira.search_jql_page(
-                jql=jql, 
-                fields=["key", "summary", "fixVersions"], 
-                max_results=page_size, 
-                next_page_token=next_token
-            )
-            issues = data.get("issues", []) or data.get("values", [])
-            if not issues:
-                break
-            
-            for issue in issues:
-                fields = issue.get("fields", {})
-                fix_versions = fields.get("fixVersions", [])
-                
-                # Берем первую версию исправления (обычно их одна)
-                if fix_versions and len(fix_versions) > 0:
-                    version = fix_versions[0]
-                    release_date = None
-                    
-                    # Получаем дату релиза из версии
-                    if isinstance(version, dict):
-                        release_date_str = version.get("releaseDate")
-                        if release_date_str:
-                            try:
-                                # Формат даты в Jira: "2025-12-31"
-                                release_date = datetime.strptime(release_date_str, "%Y-%m-%d").date()
-                            except:
-                                pass
-                        
-                        version_name = version.get("name", "")
-                    else:
-                        version_name = str(version)
-                    
-                    if release_date:
-                        all_releases.append({
-                            "epic_key": issue.get("key", ""),
-                            "epic_summary": fields.get("summary", ""),
-                            "release_date": release_date.strftime("%Y-%m-%d"),
-                            "release_date_obj": release_date.isoformat(),  # Для сортировки
-                            "version_name": version_name,
-                        })
-            
-            next_token = (data.get("nextPageToken") or "").strip()
-            if not next_token:
-                break
-        
-        # Сортируем по дате релиза (от ближайших к поздним)
-        all_releases.sort(key=lambda x: x["release_date_obj"])
+
+        all_releases = get_releases_for_current_user(jira)
         
         return JSONResponse({
             "success": True,

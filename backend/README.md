@@ -107,10 +107,16 @@ CRON_TZ=Europe/Moscow
 - фильтр: `releaseDate <= today (MSK)`
 - формат строки: `Название - срок релиза`
 
-1) Используются те же Telegram-настройки:
+1) Используются те же настройки каналов, что и для сводки времени (Telegram и/или Slack):
 ```env
+# Telegram
 TELEGRAM_ENABLED=true
 TELEGRAM_BOT_TOKEN=<token от BotFather>
+
+# Slack (опционально)
+SLACK_ENABLED=true
+SLACK_BOT_TOKEN=<xoxb token>
+SLACK_CHANNEL_ID=<C... channel id>
 ```
 
 2) Проверка без отправки:

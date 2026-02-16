@@ -8,11 +8,10 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from .daily_summary import _build_jira_client_from_credential, _mask_chat_id
+from .daily_summary import _build_jira_client_from_credential, _mask_chat_id, _send_to_enabled_channels
 from .db import SessionLocal
 from .models import ApiCredential, Team, TeamTelegramSetting
 from .release_fetcher import get_releases_for_current_user
-from .telegram_notifier import send_message
 
 MSK_TZ = ZoneInfo("Europe/Moscow")
 
@@ -121,7 +120,7 @@ def run_release_notifications(
                     sent = True
                     reason = "dry-run"
                 else:
-                    send_message(chat_id, text)
+                    _send_to_enabled_channels(chat_id, text)
                     sent = True
                     reason = "sent"
             except Exception as exc:  # noqa: BLE001
@@ -150,7 +149,7 @@ def run_release_notifications(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Telegram release notifications sender")
+    parser = argparse.ArgumentParser(description="Release notifications sender")
     parser.add_argument("--dry-run", action="store_true", help="Сформировать сообщение без отправки")
     parser.add_argument("--force", action="store_true", help="Игнорировать проверку выходного дня")
     parser.add_argument("--team-id", type=int, default=None, help="Отправить только для одной команды")

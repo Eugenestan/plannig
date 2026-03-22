@@ -168,8 +168,18 @@ def get_team_worklog(
     if not team:
         return []
 
-    # Ограничиваем доступ: если передан credential_id, убеждаемся что команда доступна
-    if credential_id is not None:
+    # Ограничиваем доступ к команде.
+    # Приоритет у app_user_id (устойчиво при ротации/пересоздании credential).
+    if app_user_id is not None:
+        allowed = db.scalar(
+            select(Team.id)
+            .join(CredentialTeam, CredentialTeam.team_id == Team.id)
+            .join(ApiCredential, ApiCredential.id == CredentialTeam.credential_id)
+            .where(ApiCredential.app_user_id == app_user_id, Team.id == team_id)
+        )
+        if allowed is None:
+            return []
+    elif credential_id is not None:
         allowed = db.scalar(
             select(CredentialTeam).where(CredentialTeam.credential_id == credential_id, CredentialTeam.team_id == team_id)
         )
@@ -212,6 +222,12 @@ def get_team_worklog(
         filter_user_ids = set(db.scalars(
             select(CredentialUser.user_id).where(CredentialUser.credential_id == credential_id)
         ).all())
+
+    if filter_user_ids is not None:
+        # Если список credential_users временно пустой/рассинхронизирован,
+        # не "обнуляем" выдачу: оставляем пользователей команды.
+        if len(filter_user_ids) == 0:
+            filter_user_ids = None
 
     if filter_user_ids is not None:
         user_ids = user_ids.intersection(filter_user_ids)

@@ -9,6 +9,34 @@ from .jira_client import Jira, extract_team_values, find_field_id, normalize_use
 from .models import CredentialTeam, CredentialUser, Team, TeamMember, User
 
 
+def _fetch_jira_users_page(jira: Jira, api_prefix: str, *, start_at: int, max_results: int) -> list[dict]:
+    """
+    Jira в разных инстансах поддерживает разные endpoints пользователей.
+    Пытаемся по очереди через несколько вариантов и возвращаем первую валидную страницу.
+    """
+    candidate_requests = [
+        (f"{api_prefix}/users/search", {"startAt": start_at, "maxResults": max_results}),
+        # Jira Cloud часто отдает пользователей именно через /user/search с query.
+        (f"{api_prefix}/user/search", {"query": ".", "startAt": start_at, "maxResults": max_results}),
+        (f"{api_prefix}/users", {"startAt": start_at, "maxResults": max_results}),
+    ]
+
+    last_error: str | None = None
+    for path, params in candidate_requests:
+        r = jira.request("GET", path, params=params)
+        if r.status_code != 200:
+            last_error = f"{path}: HTTP {r.status_code}"
+            continue
+        data = r.json()
+        if isinstance(data, list):
+            return data
+        last_error = f"{path}: unexpected payload type {type(data).__name__}"
+
+    if last_error:
+        print(f"Warning: Cannot fetch users page: {last_error}")
+    return []
+
+
 def sync_all_jira_users(jira: Jira, api_prefix: str, db: Session) -> int:
     """
     Синхронизирует всех пользователей Jira через API /users/search.
@@ -19,26 +47,7 @@ def sync_all_jira_users(jira: Jira, api_prefix: str, db: Session) -> int:
     max_results = 50  # Jira API ограничение
     
     while True:
-        # Используем /users/search для получения всех пользователей
-        params = {
-            "startAt": start_at,
-            "maxResults": max_results
-        }
-        r = jira.request("GET", f"{api_prefix}/users/search", params=params)
-        
-        if r.status_code != 200:
-            # Если endpoint не поддерживается, пробуем альтернативный способ
-            if r.status_code == 404:
-                # Пробуем получить пользователей через /users
-                r = jira.request("GET", f"{api_prefix}/users", params=params)
-                if r.status_code != 200:
-                    print(f"Warning: Cannot fetch users via /users/search or /users: HTTP {r.status_code}")
-                    break
-            else:
-                print(f"Warning: Cannot fetch users: HTTP {r.status_code}")
-                break
-        
-        users_data = r.json()
+        users_data = _fetch_jira_users_page(jira, api_prefix, start_at=start_at, max_results=max_results)
         if not users_data or not isinstance(users_data, list):
             break
         

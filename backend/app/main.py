@@ -615,10 +615,8 @@ def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Se
     try:
         # Получаем Jira клиент из server-side credential
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         # Передаем и credential_id, и app_user_id:
@@ -660,10 +658,8 @@ def api_team_epics(request: Request, team_id: int, db: Session = Depends(get_db)
     
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         # JQL запрос для эпиков
@@ -717,10 +713,8 @@ def api_team_releases(request: Request, team_id: int, db: Session = Depends(get_
     
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
 
         all_releases = get_releases_for_current_user(jira)
@@ -819,10 +813,8 @@ def api_team_done(request: Request, team_id: int, user_id: str, period: str = "t
     
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         # Получаем пользователя из БД
@@ -945,10 +937,8 @@ def api_team_users(request: Request, team_id: int, db: Session = Depends(get_db)
     
     try:
         cred = get_credential_from_session(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
 
         team = db.scalar(select(Team).where(Team.id == team_id))
@@ -1011,10 +1001,8 @@ def api_team_no_release(request: Request, team_id: int, user_id: str = "", db: S
     
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
 
         if user_id:
@@ -1120,10 +1108,8 @@ def api_team_remaining(
 
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
 
         if user_id:
@@ -1247,10 +1233,8 @@ def api_team_improve(request: Request, team_id: int, db: Session = Depends(get_d
     try:
         # Подключаемся к Jira с ключом из сессии
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         # JQL запрос для задач Improve
@@ -1351,10 +1335,8 @@ async def api_team_improve_order(request: Request, team_id: int, db: Session = D
     
     try:
         cred = get_credential_from_session(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         # Получаем массив ключей задач в новом порядке
@@ -1475,10 +1457,8 @@ def api_team_gantt(request: Request, team_id: int, db: Session = Depends(get_db)
     
     try:
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         # JQL запрос для эпиков
@@ -1668,10 +1648,8 @@ def api_team_gantt_state(request: Request, team_id: int, db: Session = Depends(g
     
     try:
         cred = get_credential_from_session(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         gantt_state = db.scalar(
@@ -1721,10 +1699,8 @@ def api_team_gantt_state_save(request: Request, team_id: int, db: Session = Depe
     
     try:
         cred = get_credential_from_session(request, db)
-        allowed = db.scalar(
-            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
-        )
-        if allowed is None:
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
         state_data = body.get("state", {})

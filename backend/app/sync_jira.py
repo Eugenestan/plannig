@@ -37,10 +37,17 @@ def _fetch_jira_users_page(jira: Jira, api_prefix: str, *, start_at: int, max_re
     return []
 
 
-def sync_all_jira_users(jira: Jira, api_prefix: str, db: Session) -> int:
+def sync_all_jira_users(
+    jira: Jira,
+    api_prefix: str,
+    db: Session,
+    *,
+    credential_id: int | None = None,
+) -> int:
     """
     Синхронизирует всех пользователей Jira через API /users/search.
-    Возвращает количество созданных/обновленных пользователей.
+    Возвращает количество созданных пользователей.
+    Если передан credential_id, дополнительно создает связи credential_users.
     """
     created_count = 0
     start_at = 0
@@ -65,6 +72,7 @@ def sync_all_jira_users(jira: Jira, api_prefix: str, db: Session) -> int:
                     active=bool(nu.get("active", True)),
                 )
                 db.add(user)
+                db.flush()
                 created_count += 1
             else:
                 # Обновляем данные пользователя
@@ -72,6 +80,16 @@ def sync_all_jira_users(jira: Jira, api_prefix: str, db: Session) -> int:
                 if nu.get("email"):
                     user.email = nu.get("email")
                 user.active = bool(nu.get("active", True))
+
+            if credential_id is not None:
+                cu = db.scalar(
+                    select(CredentialUser).where(
+                        CredentialUser.credential_id == credential_id,
+                        CredentialUser.user_id == user.id,
+                    )
+                )
+                if cu is None:
+                    db.add(CredentialUser(credential_id=credential_id, user_id=user.id))
         
         if len(users_data) < max_results:
             break
@@ -113,7 +131,7 @@ def sync_from_jira_for_credential(
         # Но если sync_all_users=True, все равно синхронизируем пользователей
         if sync_all_users:
             try:
-                users_count = sync_all_jira_users(jira, api_prefix, db)
+                users_count = sync_all_jira_users(jira, api_prefix, db, credential_id=credential_id)
                 print(f"Synced {users_count} users from Jira API")
             except Exception as e:
                 print(f"Warning: Failed to sync all users: {e}")
@@ -236,7 +254,7 @@ def sync_from_jira_for_credential(
     # Синхронизируем всех пользователей Jira, если включено
     if sync_all_users:
         try:
-            users_count = sync_all_jira_users(jira, api_prefix, db)
+            users_count = sync_all_jira_users(jira, api_prefix, db, credential_id=credential_id)
             print(f"Synced {users_count} additional users from Jira API")
             created_users += users_count
         except Exception as e:

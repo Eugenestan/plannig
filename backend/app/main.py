@@ -95,6 +95,52 @@ def check_team_access(db: Session, app_user_id: int, team_id: int, is_custom: bo
     )
 
 
+def _hydrate_credential_links_from_app_user(db: Session, *, credential_id: int, app_user_id: int) -> tuple[int, int]:
+    """
+    Восстанавливает связи credential_teams/credential_users для нового credential
+    из уже существующих связей того же app_user.
+    """
+    existing_team_ids = set(
+        db.scalars(select(CredentialTeam.team_id).where(CredentialTeam.credential_id == credential_id)).all()
+    )
+    existing_user_ids = set(
+        db.scalars(select(CredentialUser.user_id).where(CredentialUser.credential_id == credential_id)).all()
+    )
+
+    app_user_team_ids = set(
+        db.scalars(
+            select(CredentialTeam.team_id)
+            .join(ApiCredential, ApiCredential.id == CredentialTeam.credential_id)
+            .where(ApiCredential.app_user_id == app_user_id)
+        ).all()
+    )
+    app_user_user_ids = set(
+        db.scalars(
+            select(CredentialUser.user_id)
+            .join(ApiCredential, ApiCredential.id == CredentialUser.credential_id)
+            .where(ApiCredential.app_user_id == app_user_id)
+        ).all()
+    )
+
+    added_teams = 0
+    for team_id in app_user_team_ids:
+        if team_id in existing_team_ids:
+            continue
+        db.add(CredentialTeam(credential_id=credential_id, team_id=team_id))
+        added_teams += 1
+
+    added_users = 0
+    for user_id in app_user_user_ids:
+        if user_id in existing_user_ids:
+            continue
+        db.add(CredentialUser(credential_id=credential_id, user_id=user_id))
+        added_users += 1
+
+    if added_teams or added_users:
+        db.flush()
+    return added_teams, added_users
+
+
 def build_jira_client_from_api_key(api_key: str, email: str | None = None) -> tuple[Jira, str]:
     """
     Создаёт Jira-клиент из ключа (Basic если есть email, иначе Bearer).
@@ -512,6 +558,23 @@ def verify_api_key(request: Request, api_key: str = Form(...), email: str = Form
             print(f"Warning: Failed to sync teams/users: {sync_error}")
             print(traceback.format_exc())
             # Авторизация все равно успешна, даже если синхронизация не удалась
+
+        # 4) Страховка от "пустых команд" после логина:
+        # если у текущего credential нет связей, восстанавливаем их из других
+        # credential того же app_user.
+        team_links_count = db.scalar(
+            select(func.count()).select_from(CredentialTeam).where(CredentialTeam.credential_id == cred.id)
+        ) or 0
+        if team_links_count == 0:
+            added_teams, added_users = _hydrate_credential_links_from_app_user(
+                db, credential_id=cred.id, app_user_id=app_user.id
+            )
+            if added_teams or added_users:
+                db.commit()
+                print(
+                    "Recovered links for credential_id="
+                    f"{cred.id}: teams={added_teams}, users={added_users}"
+                )
         
         return RedirectResponse(url="/", status_code=303)
     finally:

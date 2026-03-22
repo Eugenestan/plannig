@@ -94,11 +94,6 @@ def sync_from_jira_for_credential(
     """
     user_fields = user_fields or ["assignee"]
 
-    if clear_existing_links:
-        db.execute(delete(CredentialTeam).where(CredentialTeam.credential_id == credential_id))
-        db.execute(delete(CredentialUser).where(CredentialUser.credential_id == credential_id))
-        db.flush()
-
     fields = jira.get_fields(api_prefix)
     
     # Пытаемся найти поле TEAM, если не найдено - просто возвращаем пустой результат
@@ -114,6 +109,14 @@ def sync_from_jira_for_credential(
             except Exception as e:
                 print(f"Warning: Failed to sync all users: {e}")
         return {"teams_created": 0, "users_created": 0, "links_created": 0}
+
+    # Важно: чистим связи только после успешного определения TEAM-поля.
+    # Иначе при временной ошибке/особенностях Jira можно потерять доступ к уже
+    # синхронизированным командам.
+    if clear_existing_links:
+        db.execute(delete(CredentialTeam).where(CredentialTeam.credential_id == credential_id))
+        db.execute(delete(CredentialUser).where(CredentialUser.credential_id == credential_id))
+        db.flush()
 
     jql = f'"{team_field_id}" is not EMPTY'
     page_size = 200

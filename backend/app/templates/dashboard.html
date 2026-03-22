@@ -173,6 +173,9 @@
               <option value="">Выберите фильтр</option>
               <option value="done">Закрытые задачи</option>
               <option value="no-release">Задачи без релиза</option>
+              <option value="remaining-no-estimate">Тикеты без оценки</option>
+              <option value="remaining-overrun">Превышение исходной оценки</option>
+              <option value="remaining-ending-soon">Тикеты, у которых кончается время</option>
             </select>
           </div>
           
@@ -180,6 +183,7 @@
           <div id="filter-user-container" style="flex: 1; min-width: 200px; display: none;">
             <label style="display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted);">Сотрудник:</label>
             <select id="filter-user-select" class="input" style="width: 100%;" onchange="loadFilterTasks()">
+              <option value="__all__">Все сотрудники</option>
               <option value="">Выберите сотрудника</option>
             </select>
           </div>
@@ -206,6 +210,7 @@
                 <th style="padding: 10px; text-align: left; font-weight: 600;">Задача</th>
                 <th style="padding: 10px; text-align: left; font-weight: 600;">Название</th>
                 <th id="filter-th-extra" style="padding: 10px; text-align: left; font-weight: 600; display: none;"></th>
+                <th id="filter-th-remaining" style="padding: 10px; text-align: left; font-weight: 600; display: none;"></th>
                 <th style="padding: 10px; text-align: left; font-weight: 600;">Дата</th>
               </tr>
             </thead>
@@ -1171,7 +1176,7 @@
         if (result.success && result.data) {
           const select = document.getElementById('filter-user-select');
           if (select) {
-            select.innerHTML = '<option value="">Выберите сотрудника</option>';
+            select.innerHTML = '<option value="__all__">Все сотрудники</option><option value="">Выберите сотрудника</option>';
             
             result.data.forEach(user => {
               const option = document.createElement('option');
@@ -1240,6 +1245,7 @@
       const content = document.getElementById('filter-content');
       const tbody = document.getElementById('filter-tbody');
       const extraTh = document.getElementById('filter-th-extra');
+      const remainingTh = document.getElementById('filter-th-remaining');
       
       if (!filterType) {
         loading.style.display = 'block';
@@ -1249,19 +1255,18 @@
         return;
       }
       
-      const userId = userSelect ? userSelect.value : '';
+      const rawUserId = userSelect ? userSelect.value : '';
+      const userId = rawUserId === '__all__' ? '' : rawUserId;
       
       // Для "Закрытые задачи" требуется и сотрудник, и период
       if (filterType === 'done') {
-        if (!userId) {
+        if (!rawUserId || rawUserId === '__all__') {
           loading.style.display = 'block';
           loading.textContent = 'Выберите сотрудника и период для загрузки задач';
           errorDiv.style.display = 'none';
           content.style.display = 'none';
           return;
         }
-      } else if (filterType === 'no-release') {
-        // Для "Задачи без релиза" сотрудник опционален
       }
       
       loading.style.display = 'block';
@@ -1277,6 +1282,18 @@
         if (filterType === 'done') {
           const period = periodSelect ? periodSelect.value : 'today';
           url = `/api/teams/${teamId}/done?user_id=${encodeURIComponent(userId)}&period=${period}${isCustom ? "&custom=1" : ""}`;
+        } else if (filterType === 'remaining-no-estimate') {
+          url = userId
+            ? `/api/teams/${teamId}/remaining?kind=no-estimate&user_id=${encodeURIComponent(userId)}${isCustom ? "&custom=1" : ""}`
+            : `/api/teams/${teamId}/remaining?kind=no-estimate${isCustom ? "&custom=1" : ""}`;
+        } else if (filterType === 'remaining-overrun') {
+          url = userId
+            ? `/api/teams/${teamId}/remaining?kind=overrun&user_id=${encodeURIComponent(userId)}${isCustom ? "&custom=1" : ""}`
+            : `/api/teams/${teamId}/remaining?kind=overrun${isCustom ? "&custom=1" : ""}`;
+        } else if (filterType === 'remaining-ending-soon') {
+          url = userId
+            ? `/api/teams/${teamId}/remaining?kind=ending-soon&user_id=${encodeURIComponent(userId)}${isCustom ? "&custom=1" : ""}`
+            : `/api/teams/${teamId}/remaining?kind=ending-soon${isCustom ? "&custom=1" : ""}`;
         } else {
           url = userId 
             ? `/api/teams/${teamId}/no-release?user_id=${encodeURIComponent(userId)}${isCustom ? "&custom=1" : ""}`
@@ -1299,9 +1316,15 @@
         
         const tasks = result.data || [];
         if (tasks.length === 0) {
-          const emptyMsg = filterType === 'done' 
+          const emptyMsg = filterType === 'done'
             ? 'Нет выполненных задач за выбранный период.'
-            : 'Нет задач без релиза.';
+            : filterType === 'remaining-no-estimate'
+              ? 'Нет тикетов без оценки.'
+              : filterType === 'remaining-overrun'
+                ? 'Нет тикетов с превышением исходной оценки.'
+                : filterType === 'remaining-ending-soon'
+                  ? 'Нет тикетов, у которых кончается время.'
+                  : 'Нет задач без релиза.';
           errorDiv.innerHTML = `<p class="muted">${emptyMsg}</p>`;
           errorDiv.style.display = 'block';
           return;
@@ -1313,16 +1336,40 @@
           const date = new Date(dateStr);
           return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
         }
+
+        function formatRemaining(seconds) {
+          const value = Number(seconds || 0);
+          if (!Number.isFinite(value)) return '-';
+          const absValue = Math.abs(Math.trunc(value));
+          const sign = value < 0 ? '-' : '';
+          const hours = Math.floor(absValue / 3600);
+          const minutes = Math.floor((absValue % 3600) / 60);
+          return `${sign}${hours}ч ${minutes}м`;
+        }
         
         // Настраиваем заголовки таблицы в зависимости от типа фильтра
         const dateTh = document.querySelector('#filter-content thead tr th:last-child');
         if (filterType === 'done') {
           extraTh.textContent = '';
           extraTh.style.display = 'none';
+          remainingTh.textContent = '';
+          remainingTh.style.display = 'none';
           if (dateTh) dateTh.textContent = 'Дата завершения';
+        } else if (
+          filterType === 'remaining-no-estimate' ||
+          filterType === 'remaining-overrun' ||
+          filterType === 'remaining-ending-soon'
+        ) {
+          extraTh.textContent = 'Исполнитель';
+          extraTh.style.display = '';
+          remainingTh.textContent = 'Остаток';
+          remainingTh.style.display = '';
+          if (dateTh) dateTh.textContent = 'Создано';
         } else {
           extraTh.textContent = 'Исполнитель';
           extraTh.style.display = '';
+          remainingTh.textContent = '';
+          remainingTh.style.display = 'none';
           if (dateTh) dateTh.textContent = 'Создано';
         }
         
@@ -1342,6 +1389,32 @@
                 </td>
                 <td style="padding: 10px;">
                   ${task.resolved_date ? formatDate(task.resolved_date) : '-'}
+                </td>
+              </tr>
+            `;
+          } else if (
+            filterType === 'remaining-no-estimate' ||
+            filterType === 'remaining-overrun' ||
+            filterType === 'remaining-ending-soon'
+          ) {
+            html += `
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 10px;">
+                  <a href="https://topntop.atlassian.net/browse/${escapeHtml(task.key)}" target="_blank" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                    ${escapeHtml(task.key)}
+                  </a>
+                </td>
+                <td style="padding: 10px;">
+                  ${escapeHtml(task.summary || '')}
+                </td>
+                <td style="padding: 10px;">
+                  ${escapeHtml(task.assignee || '-')}
+                </td>
+                <td style="padding: 10px;">
+                  ${formatRemaining(task.remaining_seconds)}
+                </td>
+                <td style="padding: 10px;">
+                  ${formatDate(task.created)}
                 </td>
               </tr>
             `;

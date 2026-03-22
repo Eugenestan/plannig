@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -23,6 +23,7 @@ from .models import (
     GanttState,
     ImproveTaskOrder,
     Team,
+    TeamConfig,
     TeamTelegramSetting,
     TeamMember,
     TodoList,
@@ -169,11 +170,14 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
             }
         )
     
-    # Если ключ есть, показываем список команд ТОЛЬКО этого credential
+    # Если ключ есть, показываем список команд пользователя (app_user),
+    # чтобы команды не "терялись" при входе с другого устройства.
     teams = db.scalars(
         select(Team)
         .join(CredentialTeam, CredentialTeam.team_id == Team.id)
-        .where(CredentialTeam.credential_id == cred.id)
+        .join(ApiCredential, ApiCredential.id == CredentialTeam.credential_id)
+        .where(ApiCredential.app_user_id == cred.app_user_id)
+        .distinct()
         .order_by(Team.name.asc())
     ).all()
     sync_error = request.query_params.get("sync_error")
@@ -226,7 +230,19 @@ def team_detail(request: Request, team_id: int, db: Session = Depends(get_db)) -
             .distinct()
             .order_by(User.display_name.asc())
         ).all()
-        selected_user_ids = {tm.user_id for tm in team.members}
+        # Приоритет: персональная конфигурация пользователя.
+        # Fallback: старый глобальный состав команды.
+        selected_user_ids = set(
+            db.scalars(
+                select(TeamConfig.jira_user_id).where(
+                    TeamConfig.app_user_id == app_user.id,
+                    TeamConfig.team_id == team_id,
+                    TeamConfig.is_custom == False,  # noqa: E712
+                )
+            ).all()
+        )
+        if not selected_user_ids:
+            selected_user_ids = {tm.user_id for tm in team.members}
         tg_setting = db.scalar(
             select(TeamTelegramSetting)
             .join(ApiCredential, ApiCredential.id == TeamTelegramSetting.credential_id)
@@ -275,9 +291,7 @@ def update_team_members(
         if team is None:
             return RedirectResponse(url="/", status_code=303)
 
-        # Перезаписываем состав команды (MVP)
-        db.execute(delete(TeamMember).where(TeamMember.team_id == team_id))
-        # разрешаем добавлять только пользователей текущего app_user (через credential_user)
+        # Разрешаем добавлять только пользователей текущего app_user (через credential_user)
         allowed_user_ids = set(
             db.scalars(
                 select(CredentialUser.user_id)
@@ -285,9 +299,24 @@ def update_team_members(
                 .where(ApiCredential.app_user_id == app_user.id)
             ).all()
         )
+        # Перезаписываем персональную конфигурацию команды для app_user.
+        db.execute(
+            delete(TeamConfig).where(
+                TeamConfig.app_user_id == app_user.id,
+                TeamConfig.team_id == team_id,
+                TeamConfig.is_custom == False,  # noqa: E712
+            )
+        )
         for uid in user_ids:
             if uid in allowed_user_ids:
-                db.add(TeamMember(team_id=team_id, user_id=uid))
+                db.add(
+                    TeamConfig(
+                        app_user_id=app_user.id,
+                        team_id=team_id,
+                        jira_user_id=uid,
+                        is_custom=False,
+                    )
+                )
         db.commit()
 
         return RedirectResponse(url=f"/teams/{team_id}/dashboard", status_code=303)
@@ -388,7 +417,9 @@ def verify_api_key(request: Request, api_key: str = Form(...), email: str = Form
     from .db import SessionLocal
 
     api_key = (api_key or "").strip()
-    email = (email or "").strip()
+    # Нормализуем email, чтобы один и тот же пользователь не дублировался
+    # из-за разного регистра (User@x.com vs user@x.com).
+    email = (email or "").strip().lower()
     if not api_key or not email:
         from urllib.parse import quote
         return RedirectResponse(url="/?error=" + quote("Заполните email и ключ"), status_code=303)
@@ -430,12 +461,14 @@ def verify_api_key(request: Request, api_key: str = Form(...), email: str = Form
             session_key = uuid.uuid4().hex
             request.session["session_key"] = session_key
 
-        # 2.1) Upsert AppUser
-        app_user = db.scalar(select(AppUser).where(AppUser.email == email))
+        # 2.1) Upsert AppUser (по email без учета регистра)
+        app_user = db.scalar(select(AppUser).where(func.lower(AppUser.email) == email))
         if app_user is None:
             app_user = AppUser(email=email)
             db.add(app_user)
             db.flush()
+        elif app_user.email != email:
+            app_user.email = email
 
         cred = db.scalar(select(ApiCredential).where(ApiCredential.session_key == session_key))
         if cred is None:
@@ -451,6 +484,9 @@ def verify_api_key(request: Request, api_key: str = Form(...), email: str = Form
             cred.jira_email = email
             cred.app_user_id = app_user.id
         db.flush()  # Получаем cred.id для синхронизации
+        # Фиксируем credential отдельно: если sync упадет, не потеряем авторизацию
+        # и не закоммитим частично измененные sync-данные.
+        db.commit()
         
         # 3) Синхронизируем команды/пользователей и привязываем доступ только к этому credential
         # Если синхронизация не удалась (например, нет поля TEAM или нет команд), это не критично - авторизация уже прошла
@@ -459,6 +495,7 @@ def verify_api_key(request: Request, api_key: str = Form(...), email: str = Form
             print(f"Sync completed: {sync_result}")
         except RuntimeError as sync_error:
             # RuntimeError может быть из-за отсутствия поля TEAM или других проблем конфигурации
+            db.rollback()
             error_msg = str(sync_error)
             if "не найдено" in error_msg.lower() or "not found" in error_msg.lower():
                 # Поле не найдено - это нормально, просто логируем
@@ -470,14 +507,12 @@ def verify_api_key(request: Request, api_key: str = Form(...), email: str = Form
                 print(traceback.format_exc())
         except Exception as sync_error:
             # Логируем ошибку синхронизации, но не прерываем авторизацию
+            db.rollback()
             import traceback
             print(f"Warning: Failed to sync teams/users: {sync_error}")
             print(traceback.format_exc())
             # Авторизация все равно успешна, даже если синхронизация не удалась
         
-        # Коммитим все изменения (credential + синхронизация)
-        db.commit()
-
         return RedirectResponse(url="/", status_code=303)
     finally:
         db.close()
@@ -523,8 +558,17 @@ def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Se
         if allowed is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
-        # Передаем клиент напрямую в get_team_worklog
-        worklog_data = get_team_worklog(db, team_id, days=days, jira=jira, api_prefix=api_prefix, credential_id=cred.id)
+        # Передаем и credential_id, и app_user_id:
+        # состав команды берется из персонального TeamConfig пользователя.
+        worklog_data = get_team_worklog(
+            db,
+            team_id,
+            days=days,
+            jira=jira,
+            api_prefix=api_prefix,
+            credential_id=cred.id,
+            app_user_id=cred.app_user_id,
+        )
         return JSONResponse({
             "success": True,
             "data": worklog_data,
@@ -851,8 +895,20 @@ def api_team_users(request: Request, team_id: int, db: Session = Depends(get_db)
                 status_code=404,
             )
         
-        members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()
-        user_ids = {m.user_id for m in members}
+        # Приоритет: персональная конфигурация текущего app_user.
+        # Fallback: старый общий TeamMember.
+        user_ids = set(
+            db.scalars(
+                select(TeamConfig.jira_user_id).where(
+                    TeamConfig.app_user_id == cred.app_user_id,
+                    TeamConfig.team_id == team_id,
+                    TeamConfig.is_custom == False,  # noqa: E712
+                )
+            ).all()
+        )
+        if not user_ids:
+            members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()
+            user_ids = {m.user_id for m in members}
         # фильтруем пользователей по credential
         allowed_user_ids = {
             cu.user_id
@@ -981,6 +1037,138 @@ def api_team_no_release(request: Request, team_id: int, user_id: str = "", db: S
         import traceback
         error_msg = str(e)
         print(f"Get no-release tasks error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"success": False, "error": error_msg},
+            status_code=500,
+        )
+
+
+@app.get("/api/teams/{team_id}/remaining")
+def api_team_remaining(
+    request: Request,
+    team_id: int,
+    user_id: str = "",
+    kind: str = "ending-soon",
+    db: Session = Depends(get_db)
+):
+    """API endpoint для фильтров задач в статусе To Do."""
+    from fastapi.responses import JSONResponse
+    from datetime import datetime
+
+    try:
+        jira, api_prefix, cred = get_jira_client_for_request(request, db)
+        allowed = db.scalar(
+            select(CredentialTeam).where(CredentialTeam.credential_id == cred.id, CredentialTeam.team_id == team_id)
+        )
+        if allowed is None:
+            return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
+
+        if user_id:
+            user = db.query(User).filter(User.jira_account_id == user_id).first()
+            if user is None:
+                return JSONResponse({"success": False, "error": "Пользователь не найден"}, status_code=404)
+            cu = db.scalar(
+                select(CredentialUser).where(CredentialUser.credential_id == cred.id, CredentialUser.user_id == user.id)
+            )
+            if cu is None:
+                return JSONResponse({"success": False, "error": "Пользователь не найден"}, status_code=404)
+
+        allowed_kinds = {"no-estimate", "overrun", "ending-soon"}
+        if kind not in allowed_kinds:
+            return JSONResponse(
+                {"success": False, "error": "Некорректный тип фильтра"},
+                status_code=400,
+            )
+
+        # Исключаем дефекты и подзадачи сразу на уровне JQL.
+        jql = 'project = TNL AND statusCategory = "To Do" AND issuetype NOT IN ("Дефект", "Подзадача", "Sub-task", "Bug")'
+        if user_id:
+            jql += f' AND assignee = "{user_id}"'
+        jql += " ORDER BY created DESC"
+
+        all_tasks = []
+        next_token = ""
+        page_size = 200
+
+        while True:
+            data = jira.search_jql_page(
+                jql=jql,
+                fields=["key", "summary", "assignee", "created", "issuetype", "timeoriginalestimate", "timespent"],
+                max_results=page_size,
+                next_page_token=next_token
+            )
+            issues = data.get("issues", []) or data.get("values", [])
+            if not issues:
+                break
+
+            for issue in issues:
+                fields = issue.get("fields", {})
+                issue_type = fields.get("issuetype", {})
+                issue_type_name = issue_type.get("name", "") if isinstance(issue_type, dict) else str(issue_type or "")
+                if issue_type_name in {"Дефект", "Подзадача", "Sub-task", "Bug"}:
+                    continue
+
+                time_original_estimate = int(fields.get("timeoriginalestimate", 0) or 0)
+                time_spent = int(fields.get("timespent", 0) or 0)
+                remaining_seconds = time_original_estimate - time_spent
+
+                include_issue = False
+                if kind == "no-estimate":
+                    include_issue = time_original_estimate == 0
+                elif kind == "overrun":
+                    include_issue = time_original_estimate > 0 and time_spent > time_original_estimate
+                else:  # ending-soon
+                    include_issue = time_original_estimate > 0 and time_spent > 0 and 0 < remaining_seconds <= 7200
+                if not include_issue:
+                    continue
+
+                assignee = fields.get("assignee")
+                assignee_name = ""
+                if assignee:
+                    if isinstance(assignee, dict):
+                        assignee_name = assignee.get("displayName", "") or assignee.get("name", "")
+                    else:
+                        assignee_name = str(assignee)
+
+                created_str = fields.get("created", "")
+                created_date = None
+                if created_str:
+                    try:
+                        if isinstance(created_str, str):
+                            date_str = created_str.split('.')[0].split('+')[0].split('Z')[0]
+                            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"]:
+                                try:
+                                    created_date = datetime.strptime(date_str, fmt)
+                                    break
+                                except Exception:
+                                    continue
+                    except Exception as e:
+                        print(f"Error parsing created date {created_str}: {e}")
+
+                all_tasks.append({
+                    "key": issue.get("key", ""),
+                    "summary": fields.get("summary", ""),
+                    "assignee": assignee_name,
+                    "issue_type": issue_type_name,
+                    "created": created_date.isoformat() if created_date else None,
+                    "remaining_seconds": remaining_seconds,
+                    "remaining_hours": round(remaining_seconds / 3600.0, 2),
+                    "original_estimate_hours": round(time_original_estimate / 3600.0, 2),
+                    "time_spent_hours": round(time_spent / 3600.0, 2),
+                })
+
+            next_token = data.get("nextPageToken", "")
+            if not next_token:
+                break
+
+        return JSONResponse({
+            "success": True,
+            "data": all_tasks,
+        })
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        print(f"Get remaining tasks error: {traceback.format_exc()}")
         return JSONResponse(
             {"success": False, "error": error_msg},
             status_code=500,

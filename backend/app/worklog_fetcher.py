@@ -177,11 +177,21 @@ def get_team_worklog(
             return []
 
     if app_user_id is not None:
-        # Получаем состав команды из TeamConfig для этого пользователя
-        user_ids = set(db.scalars(
-            select(TeamConfig.jira_user_id)
-            .where(TeamConfig.app_user_id == app_user_id, TeamConfig.team_id == team_id)
-        ).all())
+        # Приоритет: персональный состав команды из TeamConfig.
+        user_ids = set(
+            db.scalars(
+                select(TeamConfig.jira_user_id).where(
+                    TeamConfig.app_user_id == app_user_id,
+                    TeamConfig.team_id == team_id,
+                    TeamConfig.is_custom == False,  # noqa: E712
+                )
+            ).all()
+        )
+        # Мягкий fallback на старую модель, чтобы исторические настройки не "пропадали"
+        # до первого сохранения через новую логику.
+        if not user_ids:
+            members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()
+            user_ids = {m.user_id for m in members}
     else:
         # Fallback на общий состав команды
         members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()

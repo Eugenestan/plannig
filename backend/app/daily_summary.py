@@ -170,6 +170,7 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                             jira=jira,
                             api_prefix=api_prefix,
                             credential_id=credential.id,
+                            app_user_id=credential.app_user_id,
                         )
                         team_sections.append((team.name, rows))
                         processed_team_ids.add(team.id)
@@ -223,6 +224,7 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                     jira=jira,
                     api_prefix=api_prefix,
                     credential_id=credential.id,
+                    app_user_id=credential.app_user_id,
                 )
                 text = _build_summary_text(team.name, rows)
 

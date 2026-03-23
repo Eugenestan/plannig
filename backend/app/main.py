@@ -218,16 +218,26 @@ def index(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
             }
         )
     
-    # Если ключ есть, показываем список команд пользователя (app_user),
-    # чтобы команды не "терялись" при входе с другого устройства.
-    teams = db.scalars(
+    # Если ключ есть, показываем Jira-команды + пользовательские команды.
+    # Приводим к единому виду для шаблона teams.html.
+    jira_teams = db.scalars(
         select(Team)
         .join(CredentialTeam, CredentialTeam.team_id == Team.id)
         .join(ApiCredential, ApiCredential.id == CredentialTeam.credential_id)
         .where(ApiCredential.app_user_id == cred.app_user_id)
         .distinct()
-        .order_by(Team.name.asc())
     ).all()
+    custom_teams = db.scalars(
+        select(CustomTeam).where(CustomTeam.app_user_id == cred.app_user_id)
+    ).all()
+    teams = [
+        {"id": t.id, "name": t.name, "is_custom": False}
+        for t in jira_teams
+    ] + [
+        {"id": t.id, "name": t.name, "is_custom": True}
+        for t in custom_teams
+    ]
+    teams.sort(key=lambda t: (t["name"] or "").lower())
     sync_error = request.query_params.get("sync_error")
     error_msg = getattr(app.state, "sync_error", None) if sync_error else None
     return templates.TemplateResponse(

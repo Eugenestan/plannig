@@ -266,19 +266,25 @@ def sync(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
 @app.get("/teams/{team_id}", response_class=HTMLResponse)
 def team_detail(request: Request, team_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
     try:
+        is_custom = request.query_params.get("custom") == "1"
         # авторизация + доступ к команде (через app_user_id)
         app_user = get_app_user_from_session(request, db)
-        allowed_team = check_team_access(db, app_user.id, team_id, is_custom=False)
+        allowed_team = check_team_access(db, app_user.id, team_id, is_custom=is_custom)
         if allowed_team is None:
             return templates.TemplateResponse(
                 "not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404
             )
 
-        team = db.scalar(
-            select(Team).options(joinedload(Team.members).joinedload(TeamMember.user)).where(Team.id == team_id)
-        )
+        if is_custom:
+            team = db.scalar(select(CustomTeam).where(CustomTeam.id == team_id, CustomTeam.app_user_id == app_user.id))
+        else:
+            team = db.scalar(
+                select(Team).options(joinedload(Team.members).joinedload(TeamMember.user)).where(Team.id == team_id)
+            )
         if team is None:
-            return templates.TemplateResponse("not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404)
+            return templates.TemplateResponse(
+                "not_found.html", {"request": request, "message": "Команда не найдена"}, status_code=404
+            )
 
         all_users = db.scalars(
             select(User)
@@ -295,22 +301,25 @@ def team_detail(request: Request, team_id: int, db: Session = Depends(get_db)) -
                 select(TeamConfig.jira_user_id).where(
                     TeamConfig.app_user_id == app_user.id,
                     TeamConfig.team_id == team_id,
-                    TeamConfig.is_custom == False,  # noqa: E712
+                    TeamConfig.is_custom == is_custom,
                 )
             ).all()
         )
-        if not selected_user_ids:
+        if not selected_user_ids and not is_custom:
             selected_user_ids = {tm.user_id for tm in team.members}
-        tg_setting = db.scalar(
-            select(TeamTelegramSetting)
-            .join(ApiCredential, ApiCredential.id == TeamTelegramSetting.credential_id)
-            .where(TeamTelegramSetting.team_id == team_id, ApiCredential.app_user_id == app_user.id)
-        )
+        tg_setting = None
+        if not is_custom:
+            tg_setting = db.scalar(
+                select(TeamTelegramSetting)
+                .join(ApiCredential, ApiCredential.id == TeamTelegramSetting.credential_id)
+                .where(TeamTelegramSetting.team_id == team_id, ApiCredential.app_user_id == app_user.id)
+            )
         return templates.TemplateResponse(
             "team_detail.html",
             {
                 "request": request,
                 "team": team,
+                "is_custom": is_custom,
                 "all_users": all_users,
                 "selected_user_ids": selected_user_ids,
                 "telegram_chat_id": tg_setting.chat_id if tg_setting else "",
@@ -341,12 +350,7 @@ def update_team_members(
         app_user = get_app_user_from_session(request, db)
         is_custom = request.query_params.get("custom") == "1"
         allowed_team = check_team_access(db, app_user.id, team_id, is_custom=is_custom)
-        if allowed_team is None or is_custom:
-            # состав участников редактируем только для Jira-команд
-            return RedirectResponse(url="/", status_code=303)
-
-        team = db.scalar(select(Team).where(Team.id == team_id))
-        if team is None:
+        if allowed_team is None:
             return RedirectResponse(url="/", status_code=303)
 
         # Разрешаем добавлять только пользователей текущего app_user (через credential_user)
@@ -362,7 +366,7 @@ def update_team_members(
             delete(TeamConfig).where(
                 TeamConfig.app_user_id == app_user.id,
                 TeamConfig.team_id == team_id,
-                TeamConfig.is_custom == False,  # noqa: E712
+                TeamConfig.is_custom == is_custom,
             )
         )
         for uid in user_ids:
@@ -372,12 +376,14 @@ def update_team_members(
                         app_user_id=app_user.id,
                         team_id=team_id,
                         jira_user_id=uid,
-                        is_custom=False,
+                        is_custom=is_custom,
                     )
                 )
         db.commit()
-
-        return RedirectResponse(url=f"/teams/{team_id}/dashboard", status_code=303)
+        dashboard_url = f"/teams/{team_id}/dashboard"
+        if is_custom:
+            dashboard_url += "?custom=1"
+        return RedirectResponse(url=dashboard_url, status_code=303)
     except RuntimeError:
         return RedirectResponse(url="/", status_code=303)
 
@@ -627,7 +633,8 @@ def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Se
     try:
         # Получаем Jira клиент из server-side credential
         jira, api_prefix, cred = get_jira_client_for_request(request, db)
-        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        is_custom = request.query_params.get("custom") == "1"
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=is_custom)
         if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
@@ -641,6 +648,7 @@ def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Se
             api_prefix=api_prefix,
             credential_id=cred.id,
             app_user_id=cred.app_user_id,
+            is_custom=is_custom,
         )
         return JSONResponse({
             "success": True,
@@ -949,16 +957,10 @@ def api_team_users(request: Request, team_id: int, db: Session = Depends(get_db)
     
     try:
         cred = get_credential_from_session(request, db)
-        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=False)
+        is_custom = request.query_params.get("custom") == "1"
+        allowed_team = check_team_access(db, cred.app_user_id, team_id, is_custom=is_custom)
         if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
-
-        team = db.scalar(select(Team).where(Team.id == team_id))
-        if not team:
-            return JSONResponse(
-                {"success": False, "error": "Команда не найдена"},
-                status_code=404,
-            )
         
         # Приоритет: персональная конфигурация текущего app_user.
         # Fallback: старый общий TeamMember.
@@ -967,11 +969,11 @@ def api_team_users(request: Request, team_id: int, db: Session = Depends(get_db)
                 select(TeamConfig.jira_user_id).where(
                     TeamConfig.app_user_id == cred.app_user_id,
                     TeamConfig.team_id == team_id,
-                    TeamConfig.is_custom == False,  # noqa: E712
+                    TeamConfig.is_custom == is_custom,
                 )
             ).all()
         )
-        if not user_ids:
+        if not user_ids and not is_custom:
             members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()
             user_ids = {m.user_id for m in members}
         # фильтруем пользователей по credential

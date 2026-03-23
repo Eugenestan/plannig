@@ -16,7 +16,7 @@
       </div>
     </header>
 
-    <form method="post" action="/teams/{{ team.id }}/members">
+    <form method="post" action="/teams/{{ team.id }}/members{% if is_custom %}?custom=1{% endif %}">
       <div class="card">
         <div class="toolbar">
           <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
@@ -45,6 +45,7 @@
       </div>
     </form>
 
+    {% if not is_custom %}
     <form method="post" action="/teams/{{ team.id }}/telegram-settings" style="margin-top: 16px;">
       <div class="card">
         <div class="toolbar">
@@ -77,6 +78,7 @@
         </div>
       </div>
     </form>
+    {% endif %}
   </div>
 
   <script>

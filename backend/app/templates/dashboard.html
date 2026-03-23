@@ -23,7 +23,7 @@
   <div class="container">
     <header class="header">
       <div>
-        <a class="muted" href="/teams/{{ team.id }}">&larr; назад к выбору сотрудников</a>
+        <a class="muted" href="/teams/{{ team.id }}{% if is_custom %}?custom=1{% endif %}">&larr; назад к выбору сотрудников</a>
         <h1>Дашборд: {{ team.name }}</h1>
         <p class="muted">Метрики и аналитика команды</p>
       </div>

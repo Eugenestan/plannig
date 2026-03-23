@@ -149,6 +149,7 @@ def get_team_worklog(
     api_prefix: str | None = None,
     credential_id: int | None = None,
     app_user_id: int | None = None,
+    is_custom: bool = False,
     debug_out: dict | None = None,
 ) -> List[Dict]:
     """
@@ -163,9 +164,10 @@ def get_team_worklog(
         - total_hours: float (сумма часов)
         - entries: List[Dict] (детали по каждому списанию)
     """
-    # Получаем команду и её пользователей
-    team = db.get(Team, team_id)
-    if not team:
+    # Для Jira-команд нужен объект Team (jira_team_id используется в fallback-логике).
+    # Для custom-команд работаем по TeamConfig и Team не требуется.
+    team = None if is_custom else db.get(Team, team_id)
+    if not is_custom and not team:
         return []
 
     # Ограничиваем доступ к команде.
@@ -199,7 +201,7 @@ def get_team_worklog(
         )
         # Мягкий fallback на старую модель, чтобы исторические настройки не "пропадали"
         # до первого сохранения через новую логику.
-        if not user_ids:
+        if not user_ids and not is_custom:
             members = db.query(TeamMember).filter(TeamMember.team_id == team_id).all()
             user_ids = {m.user_id for m in members}
     else:
@@ -620,7 +622,7 @@ def get_team_worklog(
             except Exception:
                 pass
 
-        if not use_worklog_author or not all_issues_set:
+        if (not use_worklog_author or not all_issues_set) and not is_custom and team is not None:
             jql = f'"{team_field_id}" = "{team.jira_team_id}"'
             next_token = ""
             page_size = 200

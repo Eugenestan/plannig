@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from .config import settings
 from .jira_client import Jira, build_headers_from_env, find_field_id, load_env_file
-from .models import ApiCredential, CredentialTeam, CredentialUser, Team, TeamConfig, TeamMember, User
+from .models import ApiCredential, CredentialTeam, CredentialUser, CustomTeam, Team, TeamConfig, TeamMember, User
 import requests
 
 
@@ -173,12 +173,20 @@ def get_team_worklog(
     # Ограничиваем доступ к команде.
     # Приоритет у app_user_id (устойчиво при ротации/пересоздании credential).
     if app_user_id is not None:
-        allowed = db.scalar(
-            select(Team.id)
-            .join(CredentialTeam, CredentialTeam.team_id == Team.id)
-            .join(ApiCredential, ApiCredential.id == CredentialTeam.credential_id)
-            .where(ApiCredential.app_user_id == app_user_id, Team.id == team_id)
-        )
+        if is_custom:
+            allowed = db.scalar(
+                select(CustomTeam.id).where(
+                    CustomTeam.app_user_id == app_user_id,
+                    CustomTeam.id == team_id,
+                )
+            )
+        else:
+            allowed = db.scalar(
+                select(Team.id)
+                .join(CredentialTeam, CredentialTeam.team_id == Team.id)
+                .join(ApiCredential, ApiCredential.id == CredentialTeam.credential_id)
+                .where(ApiCredential.app_user_id == app_user_id, Team.id == team_id)
+            )
         if allowed is None:
             return []
     elif credential_id is not None:
@@ -195,7 +203,7 @@ def get_team_worklog(
                 select(TeamConfig.jira_user_id).where(
                     TeamConfig.app_user_id == app_user_id,
                     TeamConfig.team_id == team_id,
-                    TeamConfig.is_custom == False,  # noqa: E712
+                    TeamConfig.is_custom == is_custom,
                 )
             ).all()
         )

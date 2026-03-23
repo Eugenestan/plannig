@@ -36,6 +36,7 @@ from .worklog_fetcher import get_team_worklog
 from .release_fetcher import get_releases_for_current_user
 from .config import settings
 from .jira_client import Jira, load_env_file
+from .custom_teams_api import router as custom_teams_router
 import os
 import base64
 
@@ -49,6 +50,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key, max_age=86400 * 30)  # 30 дней
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.include_router(custom_teams_router)
 
 
 def _get_session_key(request: Request) -> str:

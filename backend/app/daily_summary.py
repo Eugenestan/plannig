@@ -13,7 +13,7 @@ from sqlalchemy import select
 from .config import settings
 from .db import SessionLocal
 from .jira_client import Jira, load_env_file
-from .models import ApiCredential, Team, TeamTelegramSetting
+from .models import ApiCredential, CustomTeam, Team, TeamTelegramSetting
 from .slack_notifier import send_slack_message
 from .telegram_notifier import send_message
 from .worklog_fetcher import get_team_worklog
@@ -21,6 +21,8 @@ from .worklog_fetcher import get_team_worklog
 MSK_TZ = ZoneInfo("Europe/Moscow")
 GLOBAL_SUMMARY_TEAM_ORDER = [3, 1, 2, 4]
 GLOBAL_SUMMARY_TEAM_IDS = set(GLOBAL_SUMMARY_TEAM_ORDER)
+# Кастомные команды, которые добавляются в общую сводку (если существуют у app_user).
+CUSTOM_SUMMARY_TEAM_NAMES = ["Команда ЛК"]
 
 
 @dataclass(slots=True)
@@ -175,6 +177,47 @@ def run_daily_summary(*, dry_run: bool = False, force: bool = False, team_id: in
                         team_sections.append((team.name, rows))
                         processed_team_ids.add(team.id)
                         grouped_team_ids.append(team.id)
+
+                    # Добавляем выбранные custom-команды этого app_user в общую сводку.
+                    # Важно: custom_teams и teams имеют независимые ID, поэтому не трогаем
+                    # processed_team_ids (он только для Jira teams).
+                    app_user_to_credential: dict[int, ApiCredential] = {}
+                    for _setting, _team, credential in grouped_sorted:
+                        app_user_id = getattr(credential, "app_user_id", None)
+                        if app_user_id is None:
+                            continue
+                        app_user_to_credential.setdefault(app_user_id, credential)
+
+                    custom_name_order = {name: idx for idx, name in enumerate(CUSTOM_SUMMARY_TEAM_NAMES)}
+                    for app_user_id, credential in app_user_to_credential.items():
+                        custom_teams = db.scalars(
+                            select(CustomTeam).where(
+                                CustomTeam.app_user_id == app_user_id,
+                                CustomTeam.name.in_(CUSTOM_SUMMARY_TEAM_NAMES),
+                            )
+                        ).all()
+                        custom_teams_sorted = sorted(
+                            custom_teams,
+                            key=lambda item: custom_name_order.get(item.name, 10_000),
+                        )
+                        for custom_team in custom_teams_sorted:
+                            jira_and_prefix = jira_cache.get(credential.id)
+                            if jira_and_prefix is None:
+                                jira_and_prefix = _build_jira_client_from_credential(credential)
+                                jira_cache[credential.id] = jira_and_prefix
+                            jira, api_prefix = jira_and_prefix
+
+                            rows = get_team_worklog(
+                                db,
+                                custom_team.id,
+                                days="previous_workday",
+                                jira=jira,
+                                api_prefix=api_prefix,
+                                credential_id=credential.id,
+                                app_user_id=credential.app_user_id,
+                                is_custom=True,
+                            )
+                            team_sections.append((custom_team.name, rows))
 
                     text = _build_combined_summary_text(team_sections)
                     if dry_run:

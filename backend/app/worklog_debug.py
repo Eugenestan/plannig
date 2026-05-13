@@ -24,12 +24,15 @@ from sqlalchemy import select
 
 from .daily_summary import _build_jira_client_from_credential
 from .db import SessionLocal
-from .models import ApiCredential, CredentialTeam, Team, User
+from .models import ApiCredential, CredentialTeam, Team, TeamTelegramSetting, User
 from .worklog_fetcher import get_team_worklog
 
 
 def _resolve_team_and_credential(
-    db, team_id: int | None, team_name: str | None
+    db,
+    team_id: int | None,
+    team_name: str | None,
+    credential_id: int | None,
 ) -> tuple[Team, ApiCredential]:
     if team_name:
         team = db.scalar(select(Team).where(Team.name == team_name))
@@ -41,15 +44,39 @@ def _resolve_team_and_credential(
     team = db.get(Team, team_id)
     if team is None:
         raise SystemExit(f"Team id={team_id} not found")
+
+    if credential_id is not None:
+        cred = db.get(ApiCredential, credential_id)
+        if cred is None:
+            raise SystemExit(f"ApiCredential id={credential_id} not found")
+        return team, cred
+
+    # Приоритет: credential, через который реально шлётся daily_summary в Telegram.
     cred = db.scalar(
+        select(ApiCredential)
+        .join(TeamTelegramSetting, TeamTelegramSetting.credential_id == ApiCredential.id)
+        .where(TeamTelegramSetting.team_id == team_id, TeamTelegramSetting.enabled.is_(True))
+        .order_by(ApiCredential.id.desc())
+    )
+    if cred is not None:
+        return team, cred
+
+    # Fallback: любой credential, у которого команда привязана.
+    creds = db.execute(
         select(ApiCredential)
         .join(CredentialTeam, CredentialTeam.credential_id == ApiCredential.id)
         .where(CredentialTeam.team_id == team_id)
-        .order_by(ApiCredential.id.asc())
-    )
-    if cred is None:
+        .order_by(ApiCredential.id.desc())
+    ).scalars().all()
+    if not creds:
         raise SystemExit(f"No ApiCredential bound to team_id={team_id}")
-    return team, cred
+
+    if len(creds) > 1:
+        print("[hint] multiple credentials bound to this team. Picking newest one.")
+        for c in creds:
+            print(f"  - credential_id={c.id} app_user_id={c.app_user_id} email={getattr(c, 'jira_email', '')!r}")
+        print("Use --credential-id <id> to override.\n")
+    return team, creds[0]
 
 
 def _truncate_strings(obj: Any, max_len: int = 300) -> Any:
@@ -78,6 +105,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Worklog debug for a team/user")
     parser.add_argument("--team-id", type=int, default=None)
     parser.add_argument("--team-name", type=str, default=None)
+    parser.add_argument("--credential-id", type=int, default=None,
+                        help="Override credential to use (defaults to daily_summary credential)")
     parser.add_argument("--days", type=str, default="previous_workday")
     parser.add_argument(
         "--user",
@@ -90,7 +119,13 @@ def main() -> int:
 
     db = SessionLocal()
     try:
-        team, cred = _resolve_team_and_credential(db, args.team_id, args.team_name)
+        team, cred = _resolve_team_and_credential(
+            db, args.team_id, args.team_name, args.credential_id
+        )
+        print(
+            f"[credential] id={cred.id} app_user_id={cred.app_user_id} "
+            f"email={getattr(cred, 'jira_email', '')!r}"
+        )
         jira, api_prefix = _build_jira_client_from_credential(cred)
 
         debug_out: dict = {}

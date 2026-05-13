@@ -626,7 +626,13 @@ def logout(request: Request):
 
 
 @app.get("/api/teams/{team_id}/worklog")
-def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Session = Depends(get_db)):
+def api_team_worklog(
+    request: Request,
+    team_id: int,
+    days: str = "today",
+    debug: str = "",
+    db: Session = Depends(get_db),
+):
     """API endpoint для получения worklog данных (асинхронная загрузка)."""
     from fastapi.responses import JSONResponse
     
@@ -638,6 +644,9 @@ def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Se
         if allowed_team is None:
             return JSONResponse({"success": False, "error": "Команда не найдена"}, status_code=404)
         
+        want_debug = (debug or request.query_params.get("debug") or "").strip() in ("1", "true", "yes", "on")
+        debug_payload: dict | None = {} if want_debug else None
+
         # Передаем и credential_id, и app_user_id:
         # состав команды берется из персонального TeamConfig пользователя.
         worklog_data = get_team_worklog(
@@ -649,11 +658,12 @@ def api_team_worklog(request: Request, team_id: int, days: str = "today", db: Se
             credential_id=cred.id,
             app_user_id=cred.app_user_id,
             is_custom=is_custom,
+            debug_out=debug_payload,
         )
-        return JSONResponse({
-            "success": True,
-            "data": worklog_data,
-        })
+        body: dict = {"success": True, "data": worklog_data}
+        if want_debug and isinstance(debug_payload, dict):
+            body["debug"] = debug_payload
+        return JSONResponse(body)
     except RuntimeError as e:
         # Ошибка авторизации
         error_msg = str(e)

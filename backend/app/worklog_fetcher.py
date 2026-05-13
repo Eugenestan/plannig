@@ -139,6 +139,70 @@ def _make_http_session_for_integrations() -> requests.Session:
     return s
 
 
+def _teamboard_timelog_assignee(tl: dict) -> str:
+    """Teamboard Timelog: assignee в разных версиях API может дублироваться под другими ключами."""
+    for key in ("assignee", "userId", "userID", "accountId", "owner", "loggerAccountId"):
+        v = tl.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    info = tl.get("info")
+    if isinstance(info, dict):
+        for key in ("loggerAccountId", "assignee", "userId", "accountId"):
+            v = info.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return ""
+
+
+def _teamboard_timelog_date_str(tl: dict) -> str:
+    """Дата списания YYYY-MM-DD (из date или из info.started/date)."""
+    for key in ("date", "logDate", "loggedDate"):
+        v = tl.get(key)
+        if v:
+            s = str(v).strip()
+            if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+                return s[:10]
+    info = tl.get("info")
+    if isinstance(info, dict):
+        for key in ("date", "started"):
+            v = info.get(key)
+            if v:
+                s = str(v).strip()
+                if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+                    return s[:10]
+    return ""
+
+
+def _teamboard_timelog_seconds(tl: dict) -> int:
+    """Секунды списания: timeSpentSeconds или запасные поля (float часов и т.д.)."""
+    raw = tl.get("timeSpentSeconds")
+    if raw is not None and raw != "":
+        try:
+            s = int(round(float(raw)))
+            if s > 0:
+                return s
+        except Exception:
+            pass
+    mins = tl.get("timeSpentMinutes")
+    if mins is not None and mins != "":
+        try:
+            s = int(round(float(mins) * 60.0))
+            if s > 0:
+                return s
+        except Exception:
+            pass
+    for key in ("hour", "hours", "timeSpentHours"):
+        hrs = tl.get(key)
+        if hrs is not None and hrs != "":
+            try:
+                s = int(round(float(hrs) * 3600.0))
+                if s > 0:
+                    return s
+            except Exception:
+                pass
+    return 0
+
+
 def get_team_worklog(
     db: Session,
     team_id: int,
@@ -286,9 +350,10 @@ def get_team_worklog(
     start_date_str = start_date.strftime("%Y-%m-%d")
     end_date_str = end_date.strftime("%Y-%m-%d")
 
-    if debug_out is None:
-        debug_out = {}
-    debug_out.setdefault("sources", {})
+    dbg: dict = {}
+    if isinstance(debug_out, dict):
+        dbg = debug_out
+    dbg.setdefault("sources", {})
 
     def _seconds_to_human(seconds: int) -> str:
         if seconds <= 0:
@@ -329,85 +394,72 @@ def get_team_worklog(
         data = r.json()
         return data if isinstance(data, list) else []
 
-    def _fetch_teamboard_timelogs() -> list[dict]:
+    def _fetch_teamboard_timelogs() -> tuple[list[dict], dict[str, str], dict[str, int]]:
         """
         Teamboard Public API: GET /timeplanner/timelogs
         https://api-docs.teamboard.cloud/v1/#tag/timeplanner-timelogs/GET/timeplanner/timelogs
 
         Требует Authorization: Bearer <JWT>.
+
+        Запросы выполняются **по одному userId**: иначе при HTTP 403 из-за одного
+        «битого» account id Teamboard исключал всех невалидных из batch — и часть
+        команды навсегда оставалась без timelog'ов в этом запуске.
         """
         token = (settings.teamboard_bearer_jwt or "").strip()
         if not token:
-            return []
+            return [], {}, {}
 
         base = (settings.teamboard_base_url or "").strip().rstrip("/")
         if not base:
-            return []
+            return [], {}, {}
 
         user_ids = [u.jira_account_id for u in users if u.jira_account_id]
         if not user_ids:
-            return []
+            return [], {}, {}
 
         url = f"{base}/timeplanner/timelogs"
         headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
 
-        # Пагинация: limit/offset/hasMore
-        # Teamboard API: limit ∈ [1..100], default=50
         limit = 100
-        offset = 0
         out: list[dict] = []
-        active_user_ids = list(dict.fromkeys(user_ids))
+        http_errors: dict[str, str] = {}
+        raw_rows_by_user: dict[str, int] = {}
+
+        unique_ids = list(dict.fromkeys(user_ids))
         with _make_http_session_for_integrations() as session:
-            for _ in range(50):  # safety
-                if not active_user_ids:
-                    break
-                params = [
-                    ("from", start_date_str),
-                    ("to", end_date_str),
-                    ("limit", str(limit)),
-                    ("offset", str(offset)),
-                ]
-                for uid in active_user_ids:
-                    params.append(("userIds", uid))
+            for uid in unique_ids:
+                offset = 0
+                total_for_uid = 0
+                for _page in range(50):
+                    params = [
+                        ("from", start_date_str),
+                        ("to", end_date_str),
+                        ("limit", str(limit)),
+                        ("offset", str(offset)),
+                        ("userIds", uid),
+                    ]
+                    r = session.get(url, headers=headers, params=params, timeout=30)
+                    if r.status_code == 403:
+                        http_errors[uid] = f"HTTP 403: {r.text[:1200]}"
+                        break
+                    if r.status_code != 200:
+                        http_errors[uid] = f"HTTP {r.status_code}: {r.text[:1200]}"
+                        break
 
-                r = session.get(url, headers=headers, params=params, timeout=30)
-                if r.status_code == 403:
-                    # Teamboard может валить весь ответ, если среди userIds есть невалидные аккаунты.
-                    # Пробуем исключить их и повторить запрос.
-                    invalid_ids: list[str] = []
-                    try:
-                        payload_403 = r.json() or {}
-                        errors = payload_403.get("errors") or []
-                        if isinstance(errors, list):
-                            for err in errors:
-                                if not isinstance(err, str):
-                                    continue
-                                m = re.search(r"Invalid user accounts:\s*(.+)$", err, flags=re.IGNORECASE)
-                                if not m:
-                                    continue
-                                invalid_ids.extend([x.strip() for x in m.group(1).split(",") if x.strip()])
-                    except Exception:
-                        pass
-                    if not invalid_ids:
-                        raise RuntimeError(f"Teamboard timelogs failed: HTTP {r.status_code}: {r.text}")
+                    payload = r.json() or {}
+                    data = payload.get("data") or []
+                    if isinstance(data, list):
+                        rows = [x for x in data if isinstance(x, dict)]
+                        total_for_uid += len(rows)
+                        out.extend(rows)
 
-                    active_user_ids = [uid for uid in active_user_ids if uid not in set(invalid_ids)]
-                    # Повторяем тот же offset уже без битых userIds
-                    continue
-                if r.status_code != 200:
-                    raise RuntimeError(f"Teamboard timelogs failed: HTTP {r.status_code}: {r.text}")
+                    if not bool(payload.get("hasMore")):
+                        break
+                    offset = int(payload.get("offset") or offset) + int(payload.get("limit") or limit)
 
-                payload = r.json() or {}
-                data = payload.get("data") or []
-                if isinstance(data, list):
-                    out.extend([x for x in data if isinstance(x, dict)])
+                raw_rows_by_user[uid] = total_for_uid
 
-                has_more = bool(payload.get("hasMore"))
-                if not has_more:
-                    break
-                offset = int(payload.get("offset") or offset) + int(payload.get("limit") or limit)
-
-        return out
+        return out, http_errors, raw_rows_by_user
 
     def _fetch_issue_key_summary(issue_ref: int | str) -> tuple[str, str]:
         """
@@ -728,9 +780,14 @@ def get_team_worklog(
     # Они не являются Jira worklog, поэтому добавляем отдельным источником.
     try:
         dev_logs = _fetch_devsamurai_timelogs()
-        debug_out["sources"]["devsamurai"] = {"enabled": True, "count": len(dev_logs)}
+        dbg["sources"]["devsamurai"] = {"enabled": True, "count": len(dev_logs)}
         for tl in dev_logs:
-            account_id = tl.get("assignee")
+            account_id = ""
+            for k in ("assignee", "accountId", "userId", "member"):
+                v = tl.get(k)
+                if isinstance(v, str) and v.strip():
+                    account_id = v.strip()
+                    break
             if not account_id or account_id not in user_by_account_id:
                 continue
             date_s = tl.get("date")  # YYYY-MM-DD
@@ -768,16 +825,19 @@ def get_team_worklog(
                 "comment": comment,
             })
     except Exception as e:
-        debug_out["sources"]["devsamurai"] = {"enabled": bool((settings.devsamurai_timesheet_jwt or "").strip()), "error": str(e)}
+        dbg["sources"]["devsamurai"] = {"enabled": bool((settings.devsamurai_timesheet_jwt or "").strip()), "error": str(e)}
         print(f"DevSamurai timelogs fetch failed: {e}")
 
     # Альтернатива/дополнение: Teamboard Public API timelogs
     # (если в Teamboard есть Event-типы, они приходят здесь отдельным type, issueId может быть null)
     try:
-        tb_logs = _fetch_teamboard_timelogs()
-        debug_out["sources"]["teamboard"] = {
+        tb_logs, tb_http_errors, tb_rows_per_requested_user = _fetch_teamboard_timelogs()
+        dbg["sources"]["teamboard"] = {
             "enabled": bool((settings.teamboard_bearer_jwt or "").strip()),
             "count": len(tb_logs),
+            "fetch_mode": "per_user",
+            "http_errors_by_user_id": tb_http_errors,
+            "raw_rows_by_requested_user_id": tb_rows_per_requested_user,
         }
 
         issue_ids: set[int] = set()
@@ -785,6 +845,10 @@ def get_team_worklog(
         included_events = 0
         skipped_issue_logs = 0
         skipped_issue_logs_non_numeric = 0
+        skipped_empty_assignee = 0
+        skipped_no_team_member = 0
+        skipped_no_date = 0
+        skipped_zero_seconds = 0
         # Разбивка по типам: видно, сколько event/other/task/... обработано
         by_type_included: dict[str, int] = {}
         by_type_skipped: dict[str, int] = {}
@@ -795,13 +859,21 @@ def get_team_worklog(
         # «Other» иногда приходит как task/issue без issueId (и тогда её нет в Jira worklog).
         JIRA_ISSUE_TYPES = {"task", "issue", "subtask", "sub-task"}
 
+        seen_payload_assignees: set[str] = set()
         for tl in tb_logs:
-            account_id = tl.get("assignee")
-            if not account_id or account_id not in user_by_account_id:
+            account_id = _teamboard_timelog_assignee(tl)
+            if account_id:
+                seen_payload_assignees.add(account_id)
+            if not account_id:
+                skipped_empty_assignee += 1
+                continue
+            if account_id not in user_by_account_id:
+                skipped_no_team_member += 1
                 continue
 
-            date_s = tl.get("date")
+            date_s = _teamboard_timelog_date_str(tl)
             if not date_s:
+                skipped_no_date += 1
                 continue
 
             tl_type_raw = tl.get("type") or tl.get("logTimeType") or tl.get("logtimeType")
@@ -819,12 +891,9 @@ def get_team_worklog(
                 by_type_skipped[tl_type_norm] = by_type_skipped.get(tl_type_norm, 0) + 1
                 continue
 
-            seconds = tl.get("timeSpentSeconds") or 0
-            try:
-                seconds = int(seconds)
-            except Exception:
-                seconds = 0
+            seconds = _teamboard_timelog_seconds(tl)
             if seconds <= 0:
+                skipped_zero_seconds += 1
                 continue
 
             # Иногда в event/other прилетают странные "issueId" (пустая строка/"null"/нечисловые),
@@ -846,12 +915,20 @@ def get_team_worklog(
             by_type_included[tl_type_norm or "<empty>"] = by_type_included.get(tl_type_norm or "<empty>", 0) + 1
 
         # Обновим debug-статистику уже после фильтра (чтобы было видно, что мы не дублируем Jira issue logs)
-        debug_out["sources"]["teamboard"].update({
+        dbg["sources"]["teamboard"].update({
             "included_events": included_events,
             "skipped_issue_logs": skipped_issue_logs,
             "skipped_issue_logs_non_numeric": skipped_issue_logs_non_numeric,
             "by_type_included": by_type_included,
             "by_type_skipped": by_type_skipped,
+            "skipped_empty_assignee": skipped_empty_assignee,
+            "skipped_no_team_member": skipped_no_team_member,
+            "skipped_no_date": skipped_no_date,
+            "skipped_zero_seconds": skipped_zero_seconds,
+            "unique_assignees_in_payload_sample": sorted(seen_payload_assignees)[:40],
+            "payload_assignees_not_in_team_db": sorted(
+                [x for x in seen_payload_assignees if x not in user_by_account_id]
+            )[:40],
         })
 
         issue_meta: Dict[int, tuple[str, str]] = {}
@@ -892,7 +969,7 @@ def get_team_worklog(
                 "comment": comment,
             })
     except Exception as e:
-        debug_out["sources"]["teamboard"] = {"enabled": bool((settings.teamboard_bearer_jwt or "").strip()), "error": str(e)}
+        dbg["sources"]["teamboard"] = {"enabled": bool((settings.teamboard_bearer_jwt or "").strip()), "error": str(e)}
         print(f"Teamboard timelogs fetch failed: {e}")
 
     # Сортируем по убыванию времени

@@ -785,6 +785,17 @@ def get_team_worklog(
         included_events = 0
         skipped_issue_logs = 0
         skipped_issue_logs_non_numeric = 0
+        # Разбивка по типам: видно, сколько event/other/task/... обработано
+        by_type_included: dict[str, int] = {}
+        by_type_skipped: dict[str, int] = {}
+
+        # Типы, считающиеся Jira-issue логами (их мы получаем напрямую из Jira worklog,
+        # чтобы избежать дублей). Все остальные типы (event, other, custom_task, ...)
+        # включаем как самостоятельные TimePlanner-записи.
+        JIRA_ISSUE_TYPES = {"task", "issue", "subtask", "sub-task"}
+        # Типы, которые точно НЕ относятся к Jira-задачам и должны включаться всегда,
+        # даже если у записи случайно есть непустой issueId.
+        NON_JIRA_TYPES = {"event", "other", "custom_task", "customtask"}
 
         for tl in tb_logs:
             account_id = tl.get("assignee")
@@ -795,13 +806,28 @@ def get_team_worklog(
             if not date_s:
                 continue
 
-            # ВАЖНО: Teamboard возвращает как "event" (custom_task и т.п.), так и логи по Jira issue.
-            # Jira-логи мы уже считаем через Jira worklog (чтобы не было дублей),
-            # поэтому исключаем только записи с РЕАЛЬНЫМ issueId.
+            tl_type_raw = tl.get("type")
+            tl_type = (tl_type_raw or "").strip()
+            tl_type_norm = tl_type.lower()
+
             raw_issue_id = tl.get("issueId")
             issue_id = _coerce_issue_id(raw_issue_id)
-            if issue_id is not None:
+
+            # ВАЖНО: Teamboard возвращает как "event"/"other"/"custom_task", так и
+            # логи по Jira issue. Jira-логи мы уже считаем через Jira worklog
+            # (чтобы не было дублей), поэтому исключаем ТОЛЬКО записи с типом Jira-задачи.
+            # Раньше фильтр шёл по issueId, и записи типа "other"/"event" с непустым issueId
+            # ошибочно отбрасывались.
+            if tl_type_norm in JIRA_ISSUE_TYPES:
                 skipped_issue_logs += 1
+                by_type_skipped[tl_type_norm] = by_type_skipped.get(tl_type_norm, 0) + 1
+                continue
+            # Запасной случай: если type пустой/неизвестный, но issueId валидный —
+            # тоже считаем Jira-логом, чтобы не дублировать. "Other"/"event"/"custom_task"
+            # сюда не попадут.
+            if tl_type_norm not in NON_JIRA_TYPES and issue_id is not None:
+                skipped_issue_logs += 1
+                by_type_skipped[tl_type_norm or "<empty>"] = by_type_skipped.get(tl_type_norm or "<empty>", 0) + 1
                 continue
 
             seconds = tl.get("timeSpentSeconds") or 0
@@ -812,7 +838,7 @@ def get_team_worklog(
             if seconds <= 0:
                 continue
 
-            # Иногда в event прилетают странные "issueId" (пустая строка/"null"/нечисловые),
+            # Иногда в event/other прилетают странные "issueId" (пустая строка/"null"/нечисловые),
             # не считаем их Jira-логами и не отбрасываем запись.
             if raw_issue_id not in (None, "") and issue_id is None:
                 skipped_issue_logs_non_numeric += 1
@@ -821,19 +847,22 @@ def get_team_worklog(
                 "account_id": account_id,
                 "date": date_s,
                 "seconds": seconds,
-                "type": (tl.get("type") or "").strip(),
+                "type": tl_type,
                 "notes": (tl.get("notes") or "").strip(),
                 "summary": (tl.get("summary") or "").strip() if isinstance(tl.get("summary"), str) else "",
                 "issue_id": issue_id,
                 "started": ((tl.get("info") or {}) if isinstance(tl.get("info"), dict) else {}).get("started"),
             })
             included_events += 1
+            by_type_included[tl_type_norm or "<empty>"] = by_type_included.get(tl_type_norm or "<empty>", 0) + 1
 
         # Обновим debug-статистику уже после фильтра (чтобы было видно, что мы не дублируем Jira issue logs)
         debug_out["sources"]["teamboard"].update({
             "included_events": included_events,
             "skipped_issue_logs": skipped_issue_logs,
             "skipped_issue_logs_non_numeric": skipped_issue_logs_non_numeric,
+            "by_type_included": by_type_included,
+            "by_type_skipped": by_type_skipped,
         })
 
         issue_meta: Dict[int, tuple[str, str]] = {}

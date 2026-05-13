@@ -18,5 +18,8 @@ jobs:
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             cd /opt/planing
             git pull origin main
+            systemctl restart planing
+            systemctl is-active --quiet planing && echo "planing service is active" || (systemctl status planing --no-pager; exit 1)

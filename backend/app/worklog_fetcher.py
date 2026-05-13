@@ -790,12 +790,10 @@ def get_team_worklog(
         by_type_skipped: dict[str, int] = {}
 
         # Типы, считающиеся Jira-issue логами (их мы получаем напрямую из Jira worklog,
-        # чтобы избежать дублей). Все остальные типы (event, other, custom_task, ...)
-        # включаем как самостоятельные TimePlanner-записи.
+        # чтобы избежать дублей). Исключаем только если это явная привязка к issue
+        # (есть числовой issueId). Иначе даже при type=task запись включаем: в TimePlanner
+        # «Other» иногда приходит как task/issue без issueId (и тогда её нет в Jira worklog).
         JIRA_ISSUE_TYPES = {"task", "issue", "subtask", "sub-task"}
-        # Типы, которые точно НЕ относятся к Jira-задачам и должны включаться всегда,
-        # даже если у записи случайно есть непустой issueId.
-        NON_JIRA_TYPES = {"event", "other", "custom_task", "customtask"}
 
         for tl in tb_logs:
             account_id = tl.get("assignee")
@@ -806,28 +804,19 @@ def get_team_worklog(
             if not date_s:
                 continue
 
-            tl_type_raw = tl.get("type")
+            tl_type_raw = tl.get("type") or tl.get("logTimeType") or tl.get("logtimeType")
             tl_type = (tl_type_raw or "").strip()
             tl_type_norm = tl_type.lower()
 
             raw_issue_id = tl.get("issueId")
             issue_id = _coerce_issue_id(raw_issue_id)
 
-            # ВАЖНО: Teamboard возвращает как "event"/"other"/"custom_task", так и
-            # логи по Jira issue. Jira-логи мы уже считаем через Jira worklog
-            # (чтобы не было дублей), поэтому исключаем ТОЛЬКО записи с типом Jira-задачи.
-            # Раньше фильтр шёл по issueId, и записи типа "other"/"event" с непустым issueId
-            # ошибочно отбрасывались.
-            if tl_type_norm in JIRA_ISSUE_TYPES:
+            # Дубли с Jira: только timelog, который одновременно помечен как работа по задаче
+            # и имеет реальный issueId. Всё остальное (event/other/custom_task, а также
+            # task/issue без issueId или с «битым» issueId) учитываем здесь.
+            if tl_type_norm in JIRA_ISSUE_TYPES and issue_id is not None:
                 skipped_issue_logs += 1
                 by_type_skipped[tl_type_norm] = by_type_skipped.get(tl_type_norm, 0) + 1
-                continue
-            # Запасной случай: если type пустой/неизвестный, но issueId валидный —
-            # тоже считаем Jira-логом, чтобы не дублировать. "Other"/"event"/"custom_task"
-            # сюда не попадут.
-            if tl_type_norm not in NON_JIRA_TYPES and issue_id is not None:
-                skipped_issue_logs += 1
-                by_type_skipped[tl_type_norm or "<empty>"] = by_type_skipped.get(tl_type_norm or "<empty>", 0) + 1
                 continue
 
             seconds = tl.get("timeSpentSeconds") or 0
